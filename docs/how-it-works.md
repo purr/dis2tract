@@ -66,11 +66,11 @@ sometimes you do want the feed. you can unlock it, but slowly, on purpose:
    - count one letter in a line of words
 
    pasting and dropping text are refused, and so are keyboard clipboard chips and dictation: more than 2 words arriving at once are undone.
-3. **a wrong answer costs 10 minutes** before the next try.
+3. **a wrong enter costs 30 seconds**: the sheet says it was wrong (math and counting show the right number), waits, then brings a new challenge. closing and reopening the sheet doesn't skip the wait. a typing challenge opens by itself the moment the text is right, so enter on a typo counts as wrong.
 
 | rule | value |
 | --- | --- |
-| one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen: leave with time left and it waits for you, until the next unlock or midnight |
+| one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen and in use: a video plays, or you scrolled, tapped or typed in the last 10 s. pause the video or leave with time left and it waits for you until the next unlock could start (23 min after unlocking), or until you take an unlock elsewhere |
 | between unlocks | 20 min after the time runs out (or would have, used in one go), across all sites |
 | per day | 10, across all sites |
 | one more minute | offered once, for 2 min after the time runs out. the next unlock then waits 30 min |
@@ -93,6 +93,7 @@ open them with the dis2tract toolbar button, or about:addons → dis2tract → p
 
 ## also
 
+- **a chime**: a block that appears while you browse fades in with the 6 am bell from five nights at freddy's, in the tab you're looking at. settings → block screen switches it off.
 - **your theme's colors**: the block screen and settings follow your firefox theme, live, from the first frame. desktop only: firefox for android has no themes.
 - **theater mode**: youtube opens every video in theater mode, which moves the recommendations below the video. switchable per site.
 - **uninstall**: removing dis2tract opens npr's piece on the inventor of infinite scroll, who now wants to kill it. nothing about you is sent along.

@@ -25,7 +25,8 @@
   let spent = { at: 0, ms: 0 };
   let spentAt = 0; // the last tick that spent feed time, 0 while not spending
   let unsaved = 0; // feed time spent in this tab, not yet in storage
-  let banUntil = 0; // wrong challenge answers push the next unlock to here
+  let lastInput = 0; // the last pointer, wheel, touch or key input on the page
+  let banUntil = 0; // after a wrong answer, no new challenge before this, in any tab
   let pendingAt = 0; // when a waiting loosening change is due
   let recent = []; // the latest attempt per site within HOP_MS, all sites: [{ site, at }]
   let ready = false; // storage has answered; until then nothing is counted
@@ -54,11 +55,13 @@
   // when an unlock's time ran out, or would have if used in one go
   const end = (u) => (u ? u.doneAt ?? u.at + budget(u) : -Infinity);
   const today = (t) => new Date(t).toDateString() === new Date(Date.now()).toDateString();
+  const cooldown = (u) => (u?.extended ? UNLOCK.extendedCooldownMinutes : UNLOCK.cooldownMinutes) * 60_000;
   // feed time left on this site's unlock. only the newest unlock counts, so a new one ends what was left of the
-  // last, and only on the day it was taken, so minutes are never saved up for later
+  // last, and only until the next unlock could start had it been used in one go. until midnight was too long:
+  // an unlock tried in the morning left the feed open all day, and the block seemed broken
   function left() {
     const last = unlocks.at(-1);
-    if (last?.site !== siteId || last.doneAt || !today(last.at)) return 0;
+    if (last?.site !== siteId || last.doneAt || Date.now() >= last.at + budget(last) + cooldown(last)) return 0;
     return budget(last) - (spent.at === last.at ? spent.ms : 0) - unsaved;
   }
   const unlocked = () => left() > 0;
@@ -67,8 +70,7 @@
   function nextUnlockAt() {
     if (unlocks.filter((u) => today(u.at)).length >= UNLOCK.perDay) return Infinity;
     const last = unlocks.at(-1);
-    const cooldown = (last?.extended ? UNLOCK.extendedCooldownMinutes : UNLOCK.cooldownMinutes) * 60_000;
-    return Math.max(banUntil, end(last) + cooldown);
+    return end(last) + cooldown(last);
   }
   // the extra minute: only for this site's unlock, only if it was the latest anywhere, once, and only right after it ran out
   function canExtend() {
@@ -175,35 +177,45 @@
 
   // a pause before the challenge, with a way back: in a field study the option to back off changed behaviour
   // the most, more than the delay itself (one sec, pnas 2023, doi 10.1073/pnas.2213114120). the pause shows
-  // the user's own note: their own reasons, not ours.
-  function pause(sheet, close) {
-    let left = UNLOCK.waitSeconds;
-    const count = h('p', {}, `the challenge starts in ${left} s.`);
+  // the user's own note: their own reasons, not ours. after a wrong answer it says what was wrong and waits out
+  // the penalty, and a sheet closed and opened again waits whatever is left of it
+  function pause(sheet, close, verdict) {
+    let left = Math.max(UNLOCK.waitSeconds, Math.ceil((banUntil - Date.now()) / 1000));
+    const line = () => (verdict ? `a new challenge in ${left} s.` : `the challenge starts in ${left} s.`);
+    const count = h('p', {}, line());
     const timer = setInterval(() => {
       if (!sheet.isConnected) clearInterval(timer);
-      else if (--left > 0) count.textContent = `the challenge starts in ${left} s.`;
+      else if (--left > 0) count.textContent = line();
       else {
         clearInterval(timer);
         challenge(sheet, close);
       }
     }, 1000);
     const note = settings.note && h('p', { class: 'd2t-sentence' }, settings.note);
+    const lead = verdict
+      ? h('p', { role: 'alert' }, `wrong. ${verdict}`)
+      : h('p', {}, note ? 'take a breath. you wrote this for this moment:' : 'take a breath.');
     const stop = neverMind(close);
-    sheet.replaceChildren(...[h('p', {}, note ? 'take a breath. you wrote this for this moment:' : 'take a breath.'), note, count, stop].filter(Boolean));
+    sheet.replaceChildren(...[lead, note, count, stop].filter(Boolean));
     stop.focus(); // focus moves into the sheet with the user
   }
 
   function challenge(sheet, close) {
     const c = pick(CHALLENGES)(settings.sentenceWords);
-    let done = false; // one verdict per challenge: a second enter must not cost a second penalty
+    let done = false; // one verdict per challenge: a second enter must not count a second wrong answer
     // a sentence wraps in a textarea, so a typo stays visible on a phone; a number fits one line
     const input = h(c.live ? 'textarea' : 'input', {
       'aria-label': c.ask, autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
       inputmode: c.live ? 'text' : 'numeric', placeholder: 'your answer', ...(c.live && { rows: '3' }),
     });
-    const judge = (passed) => {
+    const answer = () => {
+      if (done || !input.value.trim()) return; // an empty enter is a slip, not an answer
+      // a wrong answer in another tab since this challenge appeared: its wait holds here too, or a second open
+      // sheet would be a way around it
+      if (banUntil > Date.now()) return pause(sheet, close);
       done = true;
-      return passed ? unlock() : penalize();
+      if (c.check(input.value)) unlock();
+      else penalize(sheet, close, c.wrong);
     };
     let typed = '';
     input.addEventListener('input', () => {
@@ -211,24 +223,25 @@
       // event: they are undone, so the sentence has to be typed
       if (words(input.value) - words(typed) > 2) input.value = typed;
       typed = input.value;
-      if (c.live && !done && c.check(typed)) judge(true);
+      if (c.live && c.check(typed)) answer();
     });
     // enter in the textarea answers instead of starting a new line. beforeinput, because key events are
     // swallowed at the window while the block screen is up
     input.addEventListener('beforeinput', (e) => {
       if (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
       e.preventDefault();
-      if (!done) judge(c.check(input.value));
+      answer();
     });
     for (const type of ['paste', 'drop']) input.addEventListener(type, (e) => e.preventDefault());
     const form = h('form', {
       class: c.live ? 'd2t-field d2t-plain d2t-multi' : 'd2t-field d2t-plain',
       onsubmit: (e) => {
         e.preventDefault();
-        if (!done) judge(c.check(input.value));
+        answer();
       },
     }, input);
-    sheet.replaceChildren(h('p', {}, `${c.ask}. a wrong enter costs ${UNLOCK.penaltyMinutes} min.`), h('p', { class: 'd2t-sentence' }, c.show), form, neverMind(close));
+    const ask = `${c.ask}. a wrong enter means a new one in ${UNLOCK.penaltySeconds} s.`;
+    sheet.replaceChildren(h('p', {}, ask), h('p', { class: 'd2t-sentence' }, c.show), form, neverMind(close));
     input.focus();
   }
 
@@ -239,10 +252,9 @@
   }
 
   async function unlock() {
-    const stored = await browser.storage.local.get(['unlocks', 'unlockBan']);
-    unlocks = Array.isArray(stored.unlocks) ? stored.unlocks : [];
-    banUntil = stored.unlockBan ?? 0;
-    if (nextUnlockAt() > Date.now()) return; // another tab unlocked first or a penalty landed; that storage change redraws this one
+    const stored = (await browser.storage.local.get('unlocks')).unlocks;
+    unlocks = Array.isArray(stored) ? stored : [];
+    if (nextUnlockAt() > Date.now()) return; // another tab unlocked first; that storage change redraws this one
     const now = Date.now();
     // a day of history is all the limits need
     await browser.storage.local.set({ unlocks: [...unlocks.filter((u) => now - u.at < 86_400_000), { site: siteId, at: now }] });
@@ -259,11 +271,17 @@
     bump('extensions');
   }
 
-  // an unlock's minutes are feed minutes: they run only while a page the unlock lets through is on screen, so
-  // time left when the user goes elsewhere is still there when they come back. saved every few seconds and on
-  // leaving, not on every tick
+  // a player running now: one in the page, or one the page started through play() that sits in no document or
+  // in a shadow root
+  const playingNow = () => [...document.querySelectorAll('video, audio'), ...playing].some((m) => !m.paused && !m.ended);
+
+  // an unlock's minutes are feed minutes: they run only while a page the unlock lets through is on screen and
+  // in use, so time left when the user goes elsewhere or pauses the video is still there later. in use means
+  // something plays or the user did something lately: playing alone would make a text feed free. saved every
+  // few seconds and on leaving, not on every tick
   function spend() {
-    if (document.visibilityState !== 'visible') return stopSpending();
+    const idle = !playingNow() && Date.now() - lastInput > UNLOCK.idleSeconds * 1000;
+    if (document.visibilityState !== 'visible' || idle) return stopSpending();
     const now = Date.now();
     // a tick more than a second late is a sleeping machine, not time on the feed
     if (spentAt) unsaved += Math.min(now - spentAt, 1000);
@@ -293,9 +311,12 @@
     });
   }
 
-  async function penalize() {
-    const { unlockBan = 0 } = await browser.storage.local.get('unlockBan');
-    await browser.storage.local.set({ unlockBan: Math.max(Date.now(), unlockBan) + UNLOCK.penaltyMinutes * 60_000 });
+  // a wrong answer: what was wrong, a wait, then a new challenge, all in the same sheet. the wait is stored, so a
+  // sheet closed and opened again, a reload or another site waits it out too
+  async function penalize(sheet, close, verdict) {
+    banUntil = Date.now() + UNLOCK.penaltySeconds * 1000;
+    pause(sheet, close, verdict);
+    await browser.storage.local.set({ unlockBan: banUntil });
     bump('wrong');
   }
 
@@ -315,11 +336,15 @@
     // the open overlay must match
     const state = `${reason} ${canExtend() ? 'extend' : nextUnlockAt() > Date.now() ? 'wait' : 'open'}`;
     if (overlay?.dataset.state !== state) {
+      // only a block that was not up a moment ago fades in and chimes; a redraw replaces it in place. never the
+      // first paint of a page load, which has to cover the feed at once
+      const fresh = !overlay && ready;
       hide();
       if (ready && href !== countedHref) record();
       // mirror pinned at the top, the block centered, the unlock at the bottom
-      overlay = h('div', { id: 'dis2tract', 'data-reason': reason, 'data-state': state, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dis2tract-title', tabindex: '-1' },
+      overlay = h('div', { id: 'dis2tract', 'data-reason': reason, 'data-state': state, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dis2tract-title', tabindex: '-1', ...(fresh && { 'data-enter': '' }) },
         ...[mirror(), card(reason), unlockBox()].filter(Boolean));
+      if (fresh) chime();
       // cssom, not a style attribute: a strict page csp blocks style attributes but not setProperty
       for (const [k, v] of Object.entries(theme)) overlay.style.setProperty(k, v);
       pauseAll();
@@ -334,6 +359,11 @@
     // never while it holds focus: moving an element blurs it, which closes the phone keyboard mid-sentence.
     if (!overlay.isConnected || (overlay.nextElementSibling && !overlay.contains(document.activeElement))) root.append(overlay);
     root.toggleAttribute('data-dis2tract-blocked', true); // no mutation when already set; this runs every tick
+  }
+
+  // the 6 am bell, played by background.js; only for a tab on screen
+  function chime() {
+    if (settings.chime && document.visibilityState === 'visible') browser.runtime.sendMessage('chime');
   }
 
   function hide() {
@@ -466,6 +496,9 @@
   // another tab, another app or a locked screen pauses the unlock's minutes; closing the tab saves them
   document.addEventListener('visibilitychange', () => evaluate());
   window.addEventListener('pagehide', stopSpending);
+  for (const type of ['pointerdown', 'wheel', 'touchmove', 'keydown']) {
+    window.addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
+  }
 
   // registered at document_start, so these run before any page listener: site shortcuts (k, j, arrows)
   // cannot fire behind the overlay. typing still works, text input is the default action, not a listener.
@@ -508,13 +541,15 @@
     if (area !== 'local') return;
     if (changes.recent) recent = changes.recent.newValue ?? [];
     if (changes.spent) spent = changes.spent.newValue ?? { at: 0, ms: 0 };
-    if (!['settings', 'unlocks', 'theme', 'unlockBan', 'pending'].some((k) => k in changes)) return;
+    // the wait after a wrong answer only lengthens the next pause. no redraw: that removed the open sheet, so a
+    // wrong answer used to drop the user back on the block screen without a word
+    if (changes.unlockBan) banUntil = changes.unlockBan.newValue ?? 0;
+    if (!['settings', 'unlocks', 'theme', 'pending'].some((k) => k in changes)) return;
     if (changes.settings) settings = mergeSettings(changes.settings.newValue);
     if (changes.unlocks) unlocks = Array.isArray(changes.unlocks.newValue) ? changes.unlocks.newValue : [];
     if (changes.theme) theme = changes.theme.newValue ?? {};
-    if (changes.unlockBan) banUntil = changes.unlockBan.newValue ?? 0;
     if (changes.pending) pendingAt = changes.pending.newValue?.at ?? 0;
-    hide(); // rebuild with the new values
+    if (overlay) overlay.dataset.state = ''; // stale: show() rebuilds it in place with the new values
     // a feed switched off or on changes what this url is
     if (changes.settings) refeed();
     else evaluate();
@@ -541,7 +576,7 @@
     pendingAt = stored.pending?.at ?? 0;
     recent = Array.isArray(stored.recent) ? stored.recent : [];
     ready = true;
-    hide();
+    if (overlay) overlay.dataset.state = ''; // stale, rebuilt in place below
     onUrl(); // again: the first pass judged the url with default settings, and a feed may be switched off
 
     // single-page apps change the url without a load; polling catches every router.

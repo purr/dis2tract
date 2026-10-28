@@ -35,7 +35,7 @@ for (const [id, site] of Object.entries(SITES)) {
 }
 for (const [name, [min, max]] of Object.entries(LIMITS)) Object.assign(form.elements[name], { min, max });
 document.getElementById('limits-note').textContent =
-  `0 turns a limit off. an unlock gives ${UNLOCK.minutes} min of feed, paused while you're elsewhere; the next waits ` +
+  `0 turns a limit off. an unlock gives ${UNLOCK.minutes} min of feed, counted only while you watch or scroll; the next waits ` +
   `${UNLOCK.cooldownMinutes} min after they run out; ${UNLOCK.perDay} a day, across all sites. anything that loosens a ` +
   `setting applies ${LOOSEN_DELAY_MINUTES} min after you change it.`;
 
@@ -52,6 +52,7 @@ function fill(s) {
     if (kind === 'site') field.checked = s.sites[id] !== false;
     else if (kind === 'toggle') field.checked = s.toggles[id] ?? defaults[id];
     else if (kind === 'handle') field.value = s.handles[id] ?? '';
+    else if (field.type === 'checkbox') field.checked = s[field.name];
     else if (field.name) field.value = s[field.name];
   }
 }
@@ -94,6 +95,8 @@ async function save(tidy) {
       if (tidy) field.value = handle;
     } else if (kind === 'note') {
       if (field.value.trim()) next.note = field.value.trim();
+    } else if (field.type === 'checkbox') {
+      if (field.checked !== DEFAULTS[field.name]) next[field.name] = field.checked;
     } else if (field.name in LIMITS) {
       // an emptied or invalid field means the default, not 0 (0 would switch the limit off).
       // clamp to LIMITS: a typed value skips the browser's range check.

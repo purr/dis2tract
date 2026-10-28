@@ -24,7 +24,7 @@ most blockers shut the whole site. then you need one video, one profile or one m
 - **feeds are gone**: home, for you, explore, shorts and reels tabs show a block screen with search, `@name` for a profile, and links to your profile and messages.
 - **everything else stays**: search, profiles, messages and single posts work, until you scroll 12 screens deep or open the 5th post in a row.
 - **one question, one task**: every block screen asks why you're here and gives one thing to do instead, linked straight to it.
-- **unlocking is slow on purpose**: a 15-second pause, then a challenge with no pasting. 3 minutes of feed per unlock, paused while you're elsewhere. 20 minutes apart, 10 a day.
+- **unlocking is slow on purpose**: a 15-second pause, then a challenge with no pasting. 3 minutes of feed per unlock, counted only while you watch or scroll. 20 minutes apart, 10 a day.
 - **nothing leaves the browser**: no servers, no analytics.
 
 [how it works in detail →](docs/how-it-works.md)

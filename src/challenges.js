@@ -1,6 +1,7 @@
-// unlock challenges. each call makes a fresh puzzle: { ask, show, check(answer), live }.
-// live ones unlock the moment the answer is right; the rest are judged only on enter, so trying number after
-// number is not a way through: every wrong enter costs UNLOCK.penaltyMinutes.
+// unlock challenges. each call makes a fresh puzzle: { ask, show, check(answer), live, wrong }.
+// live ones unlock the moment the answer is right; every one is judged on enter, once. a wrong enter shows
+// `wrong`, waits UNLOCK.penaltySeconds and brings a new puzzle, so trying answer after answer is not a way
+// through. `wrong` gives the right number, never which word of a text was off: that made the texts easy.
 // var, not const: the bindings must be visible to content.js, loaded after this file.
 var WORDS = (
   'apple river stone cloud quiet garden yellow window paper candle forest gentle market silver bridge orange ' +
@@ -20,11 +21,14 @@ const asNumber = (s) => (/^\s*\d[\d\s.,']*$/.test(s) ? Number(s.replace(/\D/g, '
 var CHALLENGES = [
   function retype(words) {
     const w = randomWords(words).join(' ');
-    return { ask: 'type this, no pasting', show: w, live: true, check: (v) => normalize(v) === w };
+    return { ask: 'type this, no pasting', show: w, live: true, check: (v) => normalize(v) === w, wrong: 'the text did not match.' };
   },
   function backwards(words) {
     const w = randomWords(Math.max(6, Math.ceil(words / 2)));
-    return { ask: 'type these words in reverse order, last word first', show: w.join(' '), live: true, check: (v) => normalize(v) === [...w].reverse().join(' ') };
+    return {
+      ask: 'type these words in reverse order, last word first', show: w.join(' '), live: true,
+      check: (v) => normalize(v) === [...w].reverse().join(' '), wrong: 'that was not the reverse order.',
+    };
   },
   // sized for a head, not a calculator: two steps that take focus for half a minute. 410 × 78 sent people to
   // the calculator, which trains reaching for a tool instead of pausing
@@ -32,7 +36,10 @@ var CHALLENGES = [
     const a = randomInt(12, 49);
     const b = randomInt(3, 9);
     const c = randomInt(11, 89);
-    return { ask: 'work it out in your head, then press enter', show: `${a} × ${b} + ${c}`, live: false, check: (v) => asNumber(v) === a * b + c };
+    return {
+      ask: 'work it out in your head, then press enter', show: `${a} × ${b} + ${c}`, live: false,
+      check: (v) => asNumber(v) === a * b + c, wrong: `${a} × ${b} + ${c} is ${a * b + c}.`,
+    };
   },
   function count(words) {
     // a letter that shows up at least 3 times, so the answer is never a lucky 0 or 1
@@ -43,7 +50,10 @@ var CHALLENGES = [
       const letters = Object.keys(tally).filter((ch) => tally[ch] >= 3);
       if (!letters.length) continue;
       const letter = letters[randomInt(0, letters.length - 1)];
-      return { ask: `count every "${letter}" below, then press enter`, show: w, live: false, check: (v) => asNumber(v) === tally[letter] };
+      return {
+        ask: `count every "${letter}" below, then press enter`, show: w, live: false,
+        check: (v) => asNumber(v) === tally[letter], wrong: `"${letter}" shows up ${tally[letter]} times.`,
+      };
     }
   },
 ];

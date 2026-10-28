@@ -9,6 +9,7 @@ var DEFAULTS = {
   scrollScreens: 12, // screens of scrolling allowed per page, 0 = no limit
   chainLimit: 4, // different videos/posts in a row, 0 = no limit
   sentenceWords: 15,
+  chime: true, // a clock chime when a block appears while browsing
 };
 // [min, max] of each number setting; the options page builds its inputs from this, loading clamps older saves
 var LIMITS = { scrollScreens: [0, 500], chainLimit: [0, 100], sentenceWords: [12, 60] };
@@ -20,7 +21,8 @@ var UNLOCK = {
   cooldownMinutes: 20, // from the end of one unlock to the start of the next
   perDay: 10,
   waitSeconds: 15, // the pause before a challenge
-  penaltyMinutes: 10, // per wrong answer
+  idleSeconds: 10, // nothing playing and no input this long: an unlock's minutes stop running
+  penaltySeconds: 30, // a wrong number waits this long for a new challenge
   // right after an unlock ends: one extra minute to finish a video, paid for with a longer cooldown
   extendMinutes: 1,
   extendGraceMinutes: 2,

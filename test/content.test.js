@@ -27,7 +27,15 @@ class El {
     else this.attrs.delete(k);
     return on;
   }
-  get dataset() { return new Proxy({}, { get: (_, p) => this.getAttribute(`data-${String(p)}`) ?? undefined }); }
+  get dataset() {
+    return new Proxy({}, {
+      get: (_, p) => this.getAttribute(`data-${String(p)}`) ?? undefined,
+      set: (_, p, v) => {
+        this.setAttribute(`data-${String(p)}`, v);
+        return true;
+      },
+    });
+  }
   addEventListener(t, f) { (this.listeners[t] ??= []).push(f); }
   fire(t, e = {}) { for (const f of this.listeners[t] ?? []) f({ target: this, preventDefault() {}, ...e }); }
   append(...xs) {
@@ -117,6 +125,7 @@ function boot(url, stored = {}, setup = () => {}) {
     assign(v) { assigned.push(v); },
   };
   const timers = [];
+  const chimes = []; // every chime asked of the background page
   const store = {
     async get(keys) {
       return Object.fromEntries([keys].flat().filter((k) => k in data).map((k) => [k, structuredClone(data[k])]));
@@ -148,7 +157,14 @@ function boot(url, stored = {}, setup = () => {}) {
     setInterval: (f, ms) => timers.push({ f, ms }),
     clearInterval: (id) => { timers[id - 1] = null; },
     Date: class extends Date { static now() { return clock.now; } },
-    browser: { storage: { local: store, onChanged: { addListener: (f) => changeListeners.push(f) } } },
+    browser: {
+      storage: { local: store, onChanged: { addListener: (f) => changeListeners.push(f) } },
+      runtime: {
+        sendMessage: async (message) => {
+          if (message === 'chime') chimes.push(clock.now);
+        },
+      },
+    },
   });
   // the first of every random pick: challenge 0 (retype) made of the first word, suggestion 0, and so on
   vm.runInContext('Math.random = () => 0', ctx);
@@ -160,6 +176,7 @@ function boot(url, stored = {}, setup = () => {}) {
     data,
     doc,
     clock,
+    chimes,
     assigned,
     overlay,
     reason: () => overlay()?.getAttribute('data-reason') ?? null,
@@ -185,6 +202,15 @@ function boot(url, stored = {}, setup = () => {}) {
     visible(on) {
       doc.visibilityState = on ? 'visible' : 'hidden';
       for (const f of doc.listeners.visibilitychange) f({});
+    },
+    // a video the page starts through its own play(); its pause() stops it
+    play() {
+      const video = { paused: true, ended: false, pause() { this.paused = true; } };
+      win.wrappedJSObject.HTMLMediaElement.prototype.play.call(video);
+      return video;
+    },
+    touch: () => {
+      for (const f of win.listeners.pointerdown) f({});
     },
     nav(v) {
       location.href = v;
@@ -382,28 +408,30 @@ test('unlock: a pause, a challenge with no pasting, then the site opens for its 
   await settle();
   assert.equal(t.reason(), null);
   assert.equal(t.data.stats.unlocks, 1);
+  t.play();
   await t.run(3 * MIN - 2000);
   assert.equal(t.reason(), null);
   await t.run(3000);
   assert.equal(t.reason(), 'feed');
 });
 
-test('unlock minutes run only on screen: time left waits for a later visit, until the next unlock or midnight', async () => {
+test('unlock minutes run only on screen: time left waits for a later visit, and a newer unlock ends it', async () => {
   const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
   await settle();
+  t.play();
   await t.run(MIN);
   t.nav('https://www.tiktok.com/@someone');
   await settle();
   const away = t.data.spent.ms;
   assert.ok(away >= MIN - 1000 && away <= MIN, 'leaving the feed saves the time spent on it');
-  await t.run(10 * MIN);
+  await t.run(8 * MIN);
   t.nav('https://www.tiktok.com/foryou');
   t.visible(false);
-  await t.run(10 * MIN);
+  await t.run(8 * MIN);
   await settle();
   assert.equal(t.data.spent.ms, away, 'a profile and a hidden tab spend nothing');
   t.visible(true);
-  assert.equal(t.reason(), null, 'still unlocked after 20 minutes away');
+  assert.equal(t.reason(), null, 'still unlocked after 16 minutes away');
   const other = boot('https://www.tiktok.com/foryou', t.data);
   await settle();
   assert.equal(other.reason(), null, 'another tab sees the same time left');
@@ -413,12 +441,72 @@ test('unlock minutes run only on screen: time left waits for a later visit, unti
   assert.equal(t.reason(), 'feed');
   assert.ok(t.button('+1 min'), 'the extra minute is offered once the time is used up');
 
-  const unused = { site: 'tiktok', at: NOON - 30 * MIN };
-  const yesterday = boot('https://www.tiktok.com/foryou', { unlocks: [{ ...unused, at: NOON - 24 * 60 * MIN }] });
-  const replaced = boot('https://www.tiktok.com/foryou', { unlocks: [unused, { site: 'x', at: NOON - MIN }] });
+  const replaced = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON - 5 * MIN }, { site: 'x', at: NOON - MIN }] });
   await settle();
-  assert.equal(yesterday.reason(), 'feed', 'time left from yesterday is gone');
   assert.equal(replaced.reason(), 'feed', 'a newer unlock elsewhere ends it');
+});
+
+test('an unused unlock from earlier does not open the feed: time left lasts until the next unlock could start', async () => {
+  const t = boot('https://www.youtube.com/', { unlocks: [{ site: 'youtube', at: NOON - 3 * 60 * MIN }] });
+  assert.equal(t.reason(), 'feed');
+  await settle();
+  assert.equal(t.reason(), 'feed', 'still blocked once storage answers');
+  const { minutes, cooldownMinutes } = t.ctx.UNLOCK;
+  const fresh = boot('https://www.youtube.com/', { unlocks: [{ site: 'youtube', at: NOON - (minutes + cooldownMinutes) * MIN + 1000 }] });
+  await settle();
+  assert.equal(fresh.reason(), null, 'until then it waits');
+});
+
+test('unlock minutes stop while nothing plays and nobody touches the page', async () => {
+  const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  const video = t.play();
+  await t.run(MIN);
+  video.pause();
+  await t.run(10 * MIN);
+  const paused = t.data.spent.ms;
+  assert.ok(paused > MIN - 1000 && paused <= MIN, 'a paused video eats nothing');
+  t.touch();
+  await t.run(MIN);
+  const read = t.data.spent.ms - paused;
+  assert.ok(read > 9000 && read <= 10_000, 'input keeps the minutes running for 10 s: scrolling a text feed counts');
+  assert.equal(t.reason(), null);
+});
+
+test('a block that appears while browsing fades in and chimes; the first paint and a redraw do neither', async () => {
+  const t = boot('https://www.youtube.com/');
+  assert.equal(t.overlay().getAttribute('data-enter'), null, 'a page load covers the feed at once');
+  await settle();
+  assert.equal(t.overlay().getAttribute('data-enter'), null);
+  assert.equal(t.chimes.length, 0);
+  t.nav('https://www.youtube.com/@someone');
+  t.nav('https://www.youtube.com/');
+  assert.equal(t.overlay().getAttribute('data-enter'), '');
+  assert.equal(t.chimes.length, 1);
+  await t.setStorage({ theme: { '--d2t-bg': '#000000' } });
+  assert.equal(t.overlay().style.props['--d2t-bg'], '#000000', 'redrawn with the new values');
+  assert.equal(t.overlay().getAttribute('data-enter'), null, 'in place');
+  assert.equal(t.chimes.length, 1);
+  const quiet = boot('https://www.youtube.com/@someone', { settings: { version: 2, chime: false } });
+  await settle();
+  quiet.nav('https://www.youtube.com/');
+  assert.equal(quiet.chimes.length, 0, 'switched off in settings');
+  const hidden = boot('https://www.youtube.com/@someone');
+  await settle();
+  hidden.doc.visibilityState = 'hidden';
+  hidden.nav('https://www.youtube.com/');
+  assert.equal(hidden.chimes.length, 0, 'a tab out of sight stays quiet');
+});
+
+test('a wrong answer in another tab holds a challenge open here too', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  const { input, shown } = startChallenge(t, 'x');
+  await t.setStorage({ unlockBan: t.clock.now + 60_000 });
+  type(input, shown);
+  await settle();
+  assert.equal(t.data.unlocks, undefined, 'no unlock during the wait');
+  assert.match(t.sheet().textContent, /the challenge starts in 60 s/);
 });
 
 test('feed time saved by another tab does not redraw an open unlock sheet', async () => {
@@ -429,17 +517,29 @@ test('feed time saved by another tab does not redraw an open unlock sheet', asyn
   assert.ok(t.sheet(), 'the sheet stays open');
 });
 
-test('a wrong enter costs time, and a second enter is not a second penalty', async () => {
+test('a wrong number: the right answer, a wait, then a new challenge in the same sheet', async () => {
   const t = boot('https://x.com/home');
   await settle();
-  const { input, form } = startChallenge(t, 'x');
-  input.value = 'definitely wrong';
+  vm.runInContext('Math.random = () => 0.5', t.ctx); // the third challenge, arithmetic: 31 × 6 + 50
+  const { input, form, shown } = startChallenge(t, 'x');
+  assert.equal(shown, '31 × 6 + 50');
+  form.fire('submit');
+  assert.equal(t.sheet().querySelector('input'), input, 'an empty enter is a slip, not an answer');
+  input.value = '7';
   form.fire('submit');
   form.fire('submit');
   await settle();
-  assert.equal(t.data.unlockBan, NOON + 15_000 + t.ctx.UNLOCK.penaltyMinutes * MIN);
-  assert.equal(t.data.stats.wrong, 1);
-  assert.match(t.unlockText(), /^next unlock at /);
+  assert.match(t.sheet().textContent, /^wrong\. 31 × 6 \+ 50 is 236\./, 'the sheet says what was wrong');
+  assert.match(t.sheet().textContent, /a new challenge in 30 s/);
+  assert.equal(t.data.stats.wrong, 1, 'a second enter is not a second wrong answer');
+  assert.equal(t.data.unlockBan, NOON + 15_000 + 30_000);
+  assert.match(t.unlockText(), /^unlock x/, 'the block screen behind keeps its unlock button');
+  t.button('never mind').fire('click');
+  t.seconds(10);
+  t.button('unlock x').fire('click');
+  assert.match(t.sheet().textContent, /starts in 20 s/, 'closing and reopening does not skip the wait');
+  t.seconds(20);
+  assert.ok(t.sheet().querySelector('input'), 'a new challenge');
 });
 
 test('a whole sentence arriving in one input (clipboard chip, dictation) is undone', async () => {
@@ -454,16 +554,17 @@ test('a whole sentence arriving in one input (clipboard chip, dictation) is undo
   assert.equal(t.reason(), 'feed');
 });
 
-test('enter in the sentence field answers: a wrong one costs time', async () => {
+test('enter on a typo in the sentence is a wrong answer too, and never says which word', async () => {
   const t = boot('https://x.com/home');
   await settle();
   const { input } = startChallenge(t, 'x');
-  type(input, 'not the sentence');
+  type(input, 'apple apple apple aple');
   let kept = true;
   input.fire('beforeinput', { inputType: 'insertLineBreak', preventDefault: () => { kept = false; } });
   assert.ok(!kept, 'no new line');
   await settle();
-  assert.ok(t.data.unlockBan > NOON);
+  assert.equal(t.sheet().textContent, 'wrong. the text did not match.a new challenge in 30 s.never mind');
+  assert.equal(t.data.stats.wrong, 1);
 });
 
 test('never mind goes back to the unlock button without a penalty', async () => {
@@ -503,9 +604,11 @@ test('one extra minute right after an unlock ends, paid for with a longer cooldo
   const t = boot('https://www.tiktok.com/foryou', ran(NOON - 30_000));
   await settle();
   assert.equal(t.reason(), 'feed');
+  t.touch(); // the click's pointerdown
   t.button('+1 min').fire('click');
   await settle();
   assert.equal(t.reason(), null, 'open again');
+  t.play();
   await t.run(MIN);
   assert.equal(t.reason(), 'feed');
   assert.equal(t.button('+1 min'), null, 'only once');
@@ -669,8 +772,19 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   let current = { colors: { frame: [10, 20, 30], tab_background_text: '#fff', toolbar_field: 'red', toolbar_field_text: 'red} body {display:none', tab_line: '#0af' } };
   const registered = [];
   const on = {};
+  const played = [];
+  class Audio {
+    constructor(src) { this.src = src; }
+    play() { played.push(this.src); }
+  }
   const fakeBrowser = (withTheme) => ({
-    runtime: { getManifest: () => ({ content_scripts: [{ matches: ['*://x.com/*'] }] }), openOptionsPage() {}, setUninstallURL: (url) => (on.farewell = url) },
+    runtime: {
+      getManifest: () => ({ content_scripts: [{ matches: ['*://x.com/*'] }] }),
+      getURL: (p) => p,
+      onMessage: { addListener: (f) => (on.message = f) },
+      openOptionsPage() {},
+      setUninstallURL: (url) => (on.farewell = url),
+    },
     browserAction: { onClicked: { addListener: (f) => (on.click = f) } },
     contentScripts: {
       register: async (options) => {
@@ -684,8 +798,15 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   });
   // stand-in for the browser's css parser: hex, rgb() and plain names count as colors
   const CSS = { supports: (_, v) => /^(#[\da-f]{3,8}|rgb\([\d\s./]+\)|[a-z]+)$/i.test(v) };
-  vm.runInContext(read('background.js'), vm.createContext({ browser: fakeBrowser(true), CSS, console }));
+  vm.runInContext(read('background.js'), vm.createContext({ browser: fakeBrowser(true), CSS, console, Audio }));
   await settle();
+  on.message('something else');
+  on.message('chime');
+  assert.equal(played.length, 1, 'the chime, and only on its own message');
+  // the file it plays is in the repo and in the package
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+  assert.ok(fs.statSync(path.join(__dirname, '..', played[0])).size > 0, played[0]);
+  assert.ok(!pkg.webExt.ignoreFiles.some((f) => played[0] === f || played[0].startsWith(`${f}/`)), 'not left out of the package');
   const page = { '--d2t-bg': 'rgb(10 20 30)', '--d2t-fg': '#fff' };
   assert.deepEqual(
     JSON.parse(JSON.stringify(saved)),
@@ -707,5 +828,5 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.equal(typeof on.click, 'function', 'the toolbar button opens the settings');
   assert.match(on.farewell, /^https:\/\/[^#?]+$/, 'a plain https page, nothing about the user appended');
   // android: no theme api; only the toolbar button is wired, no error
-  vm.runInContext(read('background.js'), vm.createContext({ browser: fakeBrowser(false), CSS, console }));
+  vm.runInContext(read('background.js'), vm.createContext({ browser: fakeBrowser(false), CSS, console, Audio }));
 });

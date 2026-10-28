@@ -184,6 +184,10 @@ html[data-dis2tract-blocked] body {
 }
 #dis2tract .d2t-answer:not(:empty) { background: color-mix(in srgb, var(--d2t-accent) 14%, transparent); }
 
+/* a block that appears while browsing fades in, its card rising a little; a page load paints it at once */
+#dis2tract[data-enter] { animation: dis2tract-fade 0.35s var(--d2t-ease); }
+#dis2tract[data-enter] .d2t-card { animation: dis2tract-rise 0.5s var(--d2t-ease); }
+
 /* the unlock sheet: slides up over a dimmed block screen, which stays where it is */
 #dis2tract .d2t-layer {
   position: fixed;
@@ -219,7 +223,18 @@ html[data-dis2tract-blocked] body {
 @keyframes dis2tract-fade-out { to { opacity: 0; } }
 @keyframes dis2tract-sink { to { opacity: 0; transform: translateY(24px); } }
 #dis2tract p.d2t-ask { max-width: none; margin: 0; color: var(--d2t-fg); font-size: 15px; font-weight: 600; }
-#dis2tract button.d2t-back { margin-top: 14px; background: transparent; color: var(--d2t-muted); }
+/* never mind: the way out on every step of the sheet, full width like the cancel of an ios sheet, quiet like
+   the unlock button that opened it */
+#dis2tract button.d2t-back {
+  width: 100%;
+  height: 48px;
+  margin-top: 16px;
+  background: color-mix(in srgb, var(--d2t-card-fg) 6%, var(--d2t-card));
+  color: var(--d2t-card-fg);
+  font-size: 16px;
+  font-weight: 600;
+}
+#dis2tract button.d2t-back:active { transform: scale(0.98); } /* a wide button presses in less */
 #dis2tract p.d2t-sentence {
   max-width: none;
   padding: 14px 18px;
@@ -260,7 +275,9 @@ html[data-dis2tract-blocked] body {
 }
 /* reduced motion stops movement only; color and glow fades stay, they are not motion */
 @media (prefers-reduced-motion: reduce) {
-  #dis2tract button:active { transform: none; }
+  #dis2tract button:active,
+  #dis2tract button.d2t-back:active { transform: none; }
+  #dis2tract[data-enter] .d2t-card { animation-name: dis2tract-fade; }
   #dis2tract .d2t-sheet { animation-name: dis2tract-fade; } /* fades in and out, no slide */
   #dis2tract .d2t-layer[data-closing] .d2t-sheet { animation-name: dis2tract-fade-out; }
 }

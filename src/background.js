@@ -44,6 +44,12 @@ async function syncTheme() {
 }
 
 browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPage());
+// the 6 am bell from five nights at freddy's, when a content script reports a block appearing. played here, not
+// in the page: a page could learn the moz-extension url, whose id is random per browser and so a tracking handle.
+// extension pages may sound without a click (media.autoplay.allow-extension-background-pages, on by default)
+browser.runtime.onMessage.addListener((message) => {
+  if (message === 'chime') new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
+});
 // opens after the extension is removed: someone else's page until dis2tract has its own. only this bare url
 // goes out, never the user's note or stats.
 browser.runtime.setUninstallURL('https://www.npr.org/2026/04/07/nx-s1-5775917/why-infinite-scrolls-inventor-wants-to-kill-his-creation');
