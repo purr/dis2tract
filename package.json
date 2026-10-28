@@ -1,0 +1,26 @@
+{
+  "name": "dis2tract",
+  "private": true,
+  "scripts": {
+    "test": "node --test",
+    "lint": "web-ext lint --warnings-as-errors",
+    "build": "web-ext build --overwrite-dest",
+    "start": "web-ext run"
+  },
+  "webExt": {
+    "ignoreFiles": [
+      "package.json",
+      "package-lock.json",
+      "README.md",
+      "CHANGELOG.md",
+      "CLAUDE.md",
+      "DESIGN.md",
+      "docs",
+      "pages",
+      "test"
+    ]
+  },
+  "devDependencies": {
+    "web-ext": "^10.8.0"
+  }
+}

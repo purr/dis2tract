@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dis2tract settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <form>
+    <h1>dis2tract</h1>
+    <p class="note" id="stats"></p>
+    <div class="banner" id="pending" hidden>
+      <span></span>
+      <button type="button" id="cancel">cancel</button>
+    </div>
+    <section aria-labelledby="note-title">
+      <h2 id="note-title">note to future you</h2>
+      <div class="group">
+        <textarea name="note" rows="3" maxlength="280" aria-labelledby="note-title" placeholder="why you set this up, in your own words"></textarea>
+      </div>
+      <p class="note">shown in the pause before every unlock.</p>
+    </section>
+    <section aria-labelledby="limits-title">
+      <h2 id="limits-title">limits</h2>
+      <div class="group">
+        <label class="row"><span>scroll limit</span><span class="value"><input type="number" name="scrollScreens" inputmode="numeric"> screens</span></label>
+        <label class="row"><span>in a row</span><span class="value"><input type="number" name="chainLimit" inputmode="numeric"> posts</span></label>
+        <label class="row"><span>unlock sentence</span><span class="value"><input type="number" name="sentenceWords" inputmode="numeric"> words</span></label>
+      </div>
+      <p class="note" id="limits-note"></p>
+    </section>
+    <div id="sites"></div>
+    <output aria-live="polite"></output>
+  </form>
+  <script src="../src/settings.js"></script>
+  <script src="../src/sites.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

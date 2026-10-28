@@ -1,0 +1,100 @@
+# every push and pull request: tests, lint, and an unsigned build to download from the run's page.
+# a push to main whose manifest.json version has no release yet: signed by mozilla (unlisted) and published as
+# release v<version>, with that version's CHANGELOG.md section as notes. manifest.json is the only place the
+# version lives. mozilla signs each version once, so a release that fails after signing needs a new version.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# runs on one branch queue up instead of overlapping, so two quick pushes never sign the same version twice
+concurrency:
+  group: build-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      released: ${{ steps.version.outputs.released }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - id: version
+        run: |
+          version=$(jq -r .version manifest.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "zip=dis2tract-$version-${GITHUB_SHA::7}.zip" >> "$GITHUB_OUTPUT"
+          # exit code 2 means no such tag; anything else besides 0 is a failed lookup, not "unreleased"
+          code=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || code=$?
+          case $code in
+            0) released=true ;;
+            2) released=false ;;
+            *) echo "::error::could not read tags from origin (git ls-remote exit $code)"; exit 1 ;;
+          esac
+          echo "released=$released" >> "$GITHUB_OUTPUT"
+          # checked here, before the release job signs: a signed version can never be signed again
+          if [ "$released" = false ] && ! grep -qxF "## $version" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no \"## $version\" section for the new version"
+            exit 1
+          fi
+      - name: build unsigned
+        run: |
+          npm run build
+          mv "web-ext-artifacts/dis2tract-${{ steps.version.outputs.version }}.zip" "${{ steps.version.outputs.zip }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.version.outputs.zip }}
+          archive: false
+
+  release:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.check.outputs.released == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: sign with mozilla (unlisted)
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$WEB_EXT_API_KEY" ] || [ -z "$WEB_EXT_API_SECRET" ]; then
+            echo "::error::v$VERSION is not released: add the repository secrets AMO_JWT_ISSUER and AMO_JWT_SECRET (keys at https://addons.mozilla.org/developers/addon/api/key/)"
+            exit 1
+          fi
+          npx web-ext sign --channel=unlisted --artifacts-dir=signed
+          mv signed/*.xpi "dis2tract-$VERSION.xpi"
+      - name: release notes
+        # the lines under "## <version>", up to the next version's heading
+        run: awk -v head="## $VERSION" '/^## / { if (on) exit; on = ($0 == head); next } on' CHANGELOG.md > notes.md
+      # pinned to a commit: this job holds the signing keys and write access, so a moved tag must not run here
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: dis2tract ${{ env.VERSION }}
+          body_path: notes.md
+          files: dis2tract-${{ env.VERSION }}.xpi
+          fail_on_unmatched_files: true
