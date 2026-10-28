@@ -70,10 +70,10 @@ sometimes you do want the feed. you can unlock it, but slowly, on purpose:
 
 | rule | value |
 | --- | --- |
-| one unlock lasts | 3 min, on that site only |
-| between unlocks | 20 min, across all sites |
+| one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen: leave with time left and it waits for you, until the next unlock or midnight |
+| between unlocks | 20 min after the time runs out (or would have, used in one go), across all sites |
 | per day | 10, across all sites |
-| one more minute | offered once, for 2 min after an unlock ends. the next unlock then waits 30 min |
+| one more minute | offered once, for 2 min after the time runs out. the next unlock then waits 30 min |
 
 these rules have no setting on purpose: a setting would be the way around them. they live in `UNLOCK` in `src/settings.js`.
 

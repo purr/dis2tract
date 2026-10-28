@@ -2,6 +2,11 @@
 
 newest first. each version's section becomes its github release notes.
 
+## 0.6.0
+
+- an unlock's 3 minutes are feed time: they run only while a page the unlock lets through is on screen. leave with time left and it is still there when you come back, until the next unlock or midnight
+- the 20 minutes to the next unlock count from when the time runs out
+
 ## 0.5.0
 
 first release.

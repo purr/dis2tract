@@ -35,8 +35,9 @@ for (const [id, site] of Object.entries(SITES)) {
 }
 for (const [name, [min, max]] of Object.entries(LIMITS)) Object.assign(form.elements[name], { min, max });
 document.getElementById('limits-note').textContent =
-  `0 turns a limit off. an unlock lasts ${UNLOCK.minutes} min, then the next waits ${UNLOCK.cooldownMinutes}; ${UNLOCK.perDay} a day, ` +
-  `across all sites. anything that loosens a setting applies ${LOOSEN_DELAY_MINUTES} min after you change it.`;
+  `0 turns a limit off. an unlock gives ${UNLOCK.minutes} min of feed, paused while you're elsewhere; the next waits ` +
+  `${UNLOCK.cooldownMinutes} min after they run out; ${UNLOCK.perDay} a day, across all sites. anything that loosens a ` +
+  `setting applies ${LOOSEN_DELAY_MINUTES} min after you change it.`;
 
 function applyTheme(theme = {}) {
   document.documentElement.style.cssText = '';

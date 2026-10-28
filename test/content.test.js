@@ -88,7 +88,7 @@ function boot(url, stored = {}, setup = () => {}) {
   const clock = { now: NOON };
   const data = structuredClone(stored);
   const changeListeners = [];
-  const doc = { listeners: {}, body: null, activeElement: null, cookie: '' };
+  const doc = { listeners: {}, body: null, activeElement: null, cookie: '', visibilityState: 'visible' };
   const root = new El('html', doc);
   const win = { listeners: {} };
   Object.assign(doc, {
@@ -173,6 +173,18 @@ function boot(url, stored = {}, setup = () => {}) {
         clock.now += 1000;
         for (const x of timers.filter((x) => x?.ms === 1000)) x.f();
       }
+    },
+    // time passing tick by tick, with storage answering in between, the way it runs in a browser
+    async run(ms) {
+      for (let i = 0; i < ms / 400; i++) {
+        clock.now += 400;
+        t.tick();
+        await settle();
+      }
+    },
+    visible(on) {
+      doc.visibilityState = on ? 'visible' : 'hidden';
+      for (const f of doc.listeners.visibilitychange) f({});
     },
     nav(v) {
       location.href = v;
@@ -370,12 +382,51 @@ test('unlock: a pause, a challenge with no pasting, then the site opens for its 
   await settle();
   assert.equal(t.reason(), null);
   assert.equal(t.data.stats.unlocks, 1);
-  t.clock.now += 3 * MIN - 1000;
-  t.tick();
+  await t.run(3 * MIN - 2000);
   assert.equal(t.reason(), null);
-  t.clock.now += 2000;
-  t.tick();
+  await t.run(3000);
   assert.equal(t.reason(), 'feed');
+});
+
+test('unlock minutes run only on screen: time left waits for a later visit, until the next unlock or midnight', async () => {
+  const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  await t.run(MIN);
+  t.nav('https://www.tiktok.com/@someone');
+  await settle();
+  const away = t.data.spent.ms;
+  assert.ok(away >= MIN - 1000 && away <= MIN, 'leaving the feed saves the time spent on it');
+  await t.run(10 * MIN);
+  t.nav('https://www.tiktok.com/foryou');
+  t.visible(false);
+  await t.run(10 * MIN);
+  await settle();
+  assert.equal(t.data.spent.ms, away, 'a profile and a hidden tab spend nothing');
+  t.visible(true);
+  assert.equal(t.reason(), null, 'still unlocked after 20 minutes away');
+  const other = boot('https://www.tiktok.com/foryou', t.data);
+  await settle();
+  assert.equal(other.reason(), null, 'another tab sees the same time left');
+  await t.run(2 * MIN - 2000);
+  assert.equal(t.reason(), null);
+  await t.run(3000);
+  assert.equal(t.reason(), 'feed');
+  assert.ok(t.button('+1 min'), 'the extra minute is offered once the time is used up');
+
+  const unused = { site: 'tiktok', at: NOON - 30 * MIN };
+  const yesterday = boot('https://www.tiktok.com/foryou', { unlocks: [{ ...unused, at: NOON - 24 * 60 * MIN }] });
+  const replaced = boot('https://www.tiktok.com/foryou', { unlocks: [unused, { site: 'x', at: NOON - MIN }] });
+  await settle();
+  assert.equal(yesterday.reason(), 'feed', 'time left from yesterday is gone');
+  assert.equal(replaced.reason(), 'feed', 'a newer unlock elsewhere ends it');
+});
+
+test('feed time saved by another tab does not redraw an open unlock sheet', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  t.button('unlock x').fire('click');
+  await t.setStorage({ spent: { at: NOON - MIN, ms: 5000 } });
+  assert.ok(t.sheet(), 'the sheet stays open');
 });
 
 test('a wrong enter costs time, and a second enter is not a second penalty', async () => {
@@ -448,22 +499,24 @@ test('unlocks: spaced across all sites, a daily cap, and the old storage shape i
 });
 
 test('one extra minute right after an unlock ends, paid for with a longer cooldown', async () => {
-  const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON - 3 * MIN - 30_000 }] });
+  const ran = (doneAt) => ({ unlocks: [{ site: 'tiktok', at: NOON - 10 * MIN, doneAt }], spent: { at: NOON - 10 * MIN, ms: 3 * MIN } });
+  const t = boot('https://www.tiktok.com/foryou', ran(NOON - 30_000));
   await settle();
   assert.equal(t.reason(), 'feed');
   t.button('+1 min').fire('click');
   await settle();
   assert.equal(t.reason(), null, 'open again');
-  t.clock.now += MIN;
-  t.tick();
+  await t.run(MIN);
   assert.equal(t.reason(), 'feed');
   assert.equal(t.button('+1 min'), null, 'only once');
-  // the extended unlock ended at NOON + 30 s; the next one waits the longer cooldown from there
+  // the extra minute ran out at about NOON + 1 min; the next unlock waits the longer cooldown from there
+  t.clock.now = NOON + 30 * MIN;
+  t.tick();
   assert.match(t.unlockText(), /^next unlock at /);
-  t.clock.now = NOON + 30_000 + 30 * MIN;
+  t.clock.now = NOON + 32 * MIN;
   t.tick();
   assert.ok(t.button('unlock tiktok'));
-  const late = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON - 6 * MIN }] });
+  const late = boot('https://www.tiktok.com/foryou', ran(NOON - 3 * MIN));
   await settle();
   assert.equal(late.button('+1 min'), null, 'not once the grace window has passed');
 });

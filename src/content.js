@@ -19,7 +19,12 @@
 
   let settings = mergeSettings();
   let theme = {}; // css variables from background.js; the registered stylesheet paints them first, these keep an open page current
-  let unlocks = []; // unlock starts on every site, oldest first: [{ site, at }]
+  let unlocks = []; // unlocks on every site, oldest first: [{ site, at, extended?, doneAt? }]
+  // feed time used of the newest unlock, apart from `unlocks`: a write to `unlocks` redraws every block screen
+  // (an open challenge sheet included), and this one is written every few seconds
+  let spent = { at: 0, ms: 0 };
+  let spentAt = 0; // the last tick that spent feed time, 0 while not spending
+  let unsaved = 0; // feed time spent in this tab, not yet in storage
   let banUntil = 0; // wrong challenge answers push the next unlock to here
   let pendingAt = 0; // when a waiting loosening change is due
   let recent = []; // the latest attempt per site within HOP_MS, all sites: [{ site, at }]
@@ -45,13 +50,22 @@
   let countedHref = null; // the blocked url already counted, so a redraw is not a second block
   let hopFrom = []; // other sites the user went for within HOP_MS before this one
 
-  const end = (u) => (u ? u.at + UNLOCK_MS + (u.extended ? EXTEND_MS : 0) : -Infinity);
-  const unlockedUntil = () => end(unlocks.findLast((u) => u.site === siteId));
-  const active = () => settings.sites[siteId] !== false && Date.now() >= unlockedUntil();
+  const budget = (u) => UNLOCK_MS + (u.extended ? EXTEND_MS : 0);
+  // when an unlock's time ran out, or would have if used in one go
+  const end = (u) => (u ? u.doneAt ?? u.at + budget(u) : -Infinity);
+  const today = (t) => new Date(t).toDateString() === new Date(Date.now()).toDateString();
+  // feed time left on this site's unlock. only the newest unlock counts, so a new one ends what was left of the
+  // last, and only on the day it was taken, so minutes are never saved up for later
+  function left() {
+    const last = unlocks.at(-1);
+    if (last?.site !== siteId || last.doneAt || !today(last.at)) return 0;
+    return budget(last) - (spent.at === last.at ? spent.ms : 0) - unsaved;
+  }
+  const unlocked = () => left() > 0;
+  const active = () => settings.sites[siteId] !== false && !unlocked();
   // when the next unlock may start: Infinity once today's are used up
   function nextUnlockAt() {
-    const today = new Date(Date.now()).toDateString();
-    if (unlocks.filter((u) => new Date(u.at).toDateString() === today).length >= UNLOCK.perDay) return Infinity;
+    if (unlocks.filter((u) => today(u.at)).length >= UNLOCK.perDay) return Infinity;
     const last = unlocks.at(-1);
     const cooldown = (last?.extended ? UNLOCK.extendedCooldownMinutes : UNLOCK.cooldownMinutes) * 60_000;
     return Math.max(banUntil, end(last) + cooldown);
@@ -59,7 +73,7 @@
   // the extra minute: only for this site's unlock, only if it was the latest anywhere, once, and only right after it ran out
   function canExtend() {
     const last = unlocks.at(-1);
-    return last?.site === siteId && !last.extended && Date.now() - end(last) < UNLOCK.extendGraceMinutes * 60_000;
+    return last?.site === siteId && !last.extended && last.doneAt > Date.now() - UNLOCK.extendGraceMinutes * 60_000;
   }
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
   const words = (s) => s.split(/\s+/).filter(Boolean).length;
@@ -239,8 +253,44 @@
     const stored = (await browser.storage.local.get('unlocks')).unlocks;
     unlocks = Array.isArray(stored) ? stored : [];
     if (!canExtend()) return; // the grace window closed or another tab extended first
-    await browser.storage.local.set({ unlocks: [...unlocks.slice(0, -1), { ...unlocks.at(-1), extended: true }] });
+    const last = { ...unlocks.at(-1), extended: true };
+    delete last.doneAt; // running again, for the extra minute
+    await browser.storage.local.set({ unlocks: [...unlocks.slice(0, -1), last] });
     bump('extensions');
+  }
+
+  // an unlock's minutes are feed minutes: they run only while a page the unlock lets through is on screen, so
+  // time left when the user goes elsewhere is still there when they come back. saved every few seconds and on
+  // leaving, not on every tick
+  function spend() {
+    if (document.visibilityState !== 'visible') return stopSpending();
+    const now = Date.now();
+    // a tick more than a second late is a sleeping machine, not time on the feed
+    if (spentAt) unsaved += Math.min(now - spentAt, 1000);
+    spentAt = now;
+    if (unsaved >= 5000 || !unlocked()) save();
+  }
+
+  function stopSpending() {
+    spentAt = 0;
+    if (unsaved) save();
+  }
+
+  async function save() {
+    const ms = unsaved;
+    unsaved = 0;
+    const stored = await browser.storage.local.get(['unlocks', 'spent']);
+    const list = Array.isArray(stored.unlocks) ? stored.unlocks : [];
+    const last = list.at(-1);
+    if (last?.site !== siteId) return; // a newer unlock on another site ended this one
+    const used = (stored.spent?.at === last.at ? stored.spent.ms : 0) + ms;
+    // running out is written to `unlocks`, which redraws every tab: here the block comes back, elsewhere the next
+    // unlock time moves
+    const done = !last.doneAt && used >= budget(last);
+    await browser.storage.local.set({
+      spent: { at: last.at, ms: used },
+      ...(done && { unlocks: [...list.slice(0, -1), { ...last, doneAt: Date.now() }] }),
+    });
   }
 
   async function penalize() {
@@ -330,6 +380,14 @@
     }
   }
 
+  // why this page would be blocked without an unlock, or null
+  function blocked() {
+    if (inFeed) return 'feed';
+    if (settings.chainLimit && chain.length > settings.chainLimit) return 'chain';
+    if (!talking && settings.scrollScreens && scrolled >= settings.scrollScreens * innerHeight) return 'scroll';
+    return null;
+  }
+
   function evaluate() {
     if (pendingAt && Date.now() >= pendingAt) {
       // a waiting loosening change is due: loadSettings puts it in place, and its storage change redraws every tab
@@ -339,11 +397,15 @@
     // the 3 s carry counts from the last moment the url was still a feed, so a slow router swap is caught too
     if (onFeedUrl) feedAt = Date.now();
     tweak();
-    if (!active()) hide();
-    else if (inFeed) show('feed');
-    else if (settings.chainLimit && chain.length > settings.chainLimit) show('chain');
-    else if (!talking && settings.scrollScreens && scrolled >= settings.scrollScreens * innerHeight) show('scroll');
-    else hide();
+    const reason = settings.sites[siteId] !== false && blocked();
+    if (reason && unlocked()) {
+      hide();
+      spend();
+    } else {
+      stopSpending();
+      if (reason) show(reason);
+      else hide();
+    }
     if (overlay && ++pauseTicks % 3 === 0) pauseAll(); // players that load later, every ~1.2 s while blocked
     if (!overlay) for (const m of playing) if (m.paused) playing.delete(m); // remember only what still plays
   }
@@ -401,6 +463,9 @@
   window.addEventListener('popstate', () => {
     traversed = true;
   });
+  // another tab, another app or a locked screen pauses the unlock's minutes; closing the tab saves them
+  document.addEventListener('visibilitychange', () => evaluate());
+  window.addEventListener('pagehide', stopSpending);
 
   // registered at document_start, so these run before any page listener: site shortcuts (k, j, arrows)
   // cannot fire behind the overlay. typing still works, text input is the default action, not a listener.
@@ -442,6 +507,7 @@
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if (changes.recent) recent = changes.recent.newValue ?? [];
+    if (changes.spent) spent = changes.spent.newValue ?? { at: 0, ms: 0 };
     if (!['settings', 'unlocks', 'theme', 'unlockBan', 'pending'].some((k) => k in changes)) return;
     if (changes.settings) settings = mergeSettings(changes.settings.newValue);
     if (changes.unlocks) unlocks = Array.isArray(changes.unlocks.newValue) ? changes.unlocks.newValue : [];
@@ -455,7 +521,7 @@
   });
 
   onUrl(); // with defaults, so a feed is covered before storage answers and never flashes
-  Promise.all([loadSettings(), browser.storage.local.get(['unlocks', 'theme', 'unlockBan', 'pending', 'recent', TRAIL])]).then(([s, stored]) => {
+  Promise.all([loadSettings(), browser.storage.local.get(['unlocks', 'spent', 'theme', 'unlockBan', 'pending', 'recent', TRAIL])]).then(([s, stored]) => {
     settings = s;
     // a reload or a new tab within a minute continues the run of items, and the feed this item was carried from
     const trail = stored[TRAIL];
@@ -469,6 +535,7 @@
     }
     // older versions stored an object here; anything but a list means no unlocks
     unlocks = Array.isArray(stored.unlocks) ? stored.unlocks : [];
+    spent = stored.spent ?? spent;
     theme = stored.theme ?? {};
     banUntil = stored.unlockBan ?? 0;
     pendingAt = stored.pending?.at ?? 0;
