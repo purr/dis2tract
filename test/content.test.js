@@ -931,12 +931,44 @@ test('youtube links to your own channel without a handle', async () => {
   assert.ok(t.find((n) => n.tagName === 'A' && n.getAttribute('href') === '/profile'));
 });
 
+test('the porn page is built from the block screen\'s parts, look and theme', async () => {
+  const html = fs.readFileSync(path.join(__dirname, '../porn/porn.html'), 'utf8');
+  assert.deepEqual([...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]), ['../css/overlay.css', '../src/settings.js', '../src/ui.js', '../src/suggestions.js', 'porn.js']);
+  const doc = {};
+  Object.assign(doc, {
+    body: new El('body', doc),
+    // a video that plays; the rest of the fake dom stands in as usual
+    createElement: (t) => Object.assign(new El(t, doc), t === 'video' && { play: () => Promise.resolve() }),
+  });
+  const ctx = vm.createContext({
+    document: doc,
+    history: { length: 1 },
+    browser: { extension: { getBackgroundPage: () => ({ theme: { '--d2t-bg': '#123456' } }) }, tabs: {} },
+  });
+  for (const f of ['../src/settings.js', '../src/ui.js', '../src/suggestions.js', '../porn/porn.js']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), ctx, { filename: f });
+  }
+  const screen = doc.body.children[0];
+  const has = (cls) => screen.find((n) => n.getAttribute('class') === cls);
+  assert.equal(screen.getAttribute('id'), 'dis2tract');
+  assert.equal(screen.style.props['--d2t-bg'], '#123456', 'the firefox theme, like the block screen');
+  assert.equal(screen.find((n) => n.tagName === 'H2').textContent, 'no porn');
+  assert.ok(has('d2t-sub') && has('d2t-answer') && has('d2t-unlock'));
+  const clip = has('d2t-clip');
+  assert.ok(fs.statSync(path.join(__dirname, '../porn', clip.src)).size > 0, clip.src);
+  assert.equal(screen.find((n) => n.textContent === 'go back').hidden, true, 'nothing to go back to in a new tab');
+});
+
 test('background: theme pairs become a document_start stylesheet and a storage mirror; bad colors are dropped', async () => {
-  let saved;
+  let saved = {};
   let current = { colors: { frame: [10, 20, 30], tab_background_text: '#fff', toolbar_field: 'red', toolbar_field_text: 'red} body {display:none', tab_line: '#0af' } };
   const registered = [];
   const on = {};
   const played = [];
+  const sent = []; // tabs sent elsewhere: [tabId, url]
+  const reported = []; // history changes passed on to a tab: [tabId, url, frameId]
+  const watched = []; // webRequest listeners: { f, filter, extra }
+  const streams = {}; // response filters by request id
   class Audio {
     constructor(src) { this.src = src; }
     play() { played.push(this.src); }
@@ -949,6 +981,19 @@ test('background: theme pairs become a document_start stylesheet and a storage m
       openOptionsPage() {},
       setUninstallURL: (url) => (on.farewell = url),
     },
+    webNavigation: {
+      onBeforeNavigate: { addListener: (f) => (on.navigate = f) },
+      onCommitted: { addListener: (f) => (on.committed = f) },
+      onHistoryStateUpdated: { addListener: (f, filter) => Object.assign(on, { history: f, historyFilter: filter }) },
+    },
+    webRequest: {
+      onBeforeRequest: { addListener: (f, filter, extra) => watched.push({ f, filter, extra }) },
+      filterResponseData: (requestId) => (streams[requestId] = { written: [], write(d) { this.written.push(d); }, close() { this.closed = true; } }),
+    },
+    tabs: {
+      update: (tabId, { url }) => sent.push([tabId, url]),
+      sendMessage: async (tabId, message, options) => reported.push([tabId, message.url, options.frameId]),
+    },
     browserAction: { onClicked: { addListener: (f) => (on.click = f) } },
     contentScripts: {
       register: async (options) => {
@@ -957,13 +1002,76 @@ test('background: theme pairs become a document_start stylesheet and a storage m
         return r;
       },
     },
-    storage: { local: { set: async (o) => { saved = o; } } },
+    storage: { local: { get: async () => structuredClone(saved), set: async (o) => { saved = { ...saved, ...o }; } } },
     ...(withTheme && { theme: { getCurrent: async () => current, onUpdated: { addListener: (f) => (on.updated = f) } } }),
   });
   // stand-in for the browser's css parser: hex, rgb() and plain names count as colors
   const CSS = { supports: (_, v) => /^(#[\da-f]{3,8}|rgb\([\d\s./]+\)|[a-z]+)$/i.test(v) };
-  vm.runInContext(read('background.js'), vm.createContext({ browser: fakeBrowser(true), CSS, console, Audio }));
+  // the porn list download: oisd's format, a comment and one domain per line
+  let download = `# oisd nsfw small\n${Array.from({ length: 1000 }, (_, i) => `site${i}.test`).join('\n')}\nexample.test\n`;
+  const fetched = [];
+  const fetch = async (url) => {
+    fetched.push(url);
+    return { ok: true, text: async () => download };
+  };
+  const background = (withTheme) => {
+    const ctx = vm.createContext({ browser: fakeBrowser(withTheme), CSS, console, Audio, URL, TextDecoder, fetch, setInterval: () => 0 });
+    vm.runInContext(read('background.js'), ctx, { filename: 'background.js' });
+    return ctx;
+  };
+  background(true);
   await settle();
+  // porn: a top-level load of a listed site or any subdomain of it goes to the extension's page
+  assert.equal(new URL(fetched[0]).hostname, 'raw.githubusercontent.com', 'a host that lets any origin read it');
+  assert.equal(saved.pornList.domains.length, 1001, 'kept for offline starts');
+  on.navigate({ frameId: 0, tabId: 7, url: 'https://www.example.test/videos' });
+  on.navigate({ frameId: 3, tabId: 8, url: 'https://example.test/embed/1' }); // a player inside another site
+  on.committed({ frameId: 0, tabId: 9, url: 'https://example.test/' }); // where a short link redirected to
+  on.navigate({ frameId: 0, tabId: 10, url: 'https://example.test./' }); // a trailing dot
+  on.navigate({ frameId: 0, tabId: 11, url: 'https://anything.xxx/' }); // an adult top-level domain
+  on.navigate({ frameId: 0, tabId: 12, url: 'https://notexample.test/' }); // only a look-alike name
+  on.navigate({ frameId: 0, tabId: 13, url: 'about:blank' });
+  assert.deepEqual(sent, [7, 8, 9, 10, 11].map((tab) => [tab, 'porn/porn.html']));
+  assert.ok(fs.statSync(path.join(__dirname, '..', sent[0][1])).size > 0);
+  // a trailing dot on any other site: the same address without it, where the rules apply
+  on.navigate({ frameId: 0, tabId: 14, url: 'https://www.tiktok.com./foryou' });
+  assert.deepEqual(sent.at(-1), [14, 'https://www.tiktok.com/foryou']);
+  // adult labels in what x, reddit and bluesky load: the data reaches the page untouched, and the tab goes to the
+  // porn page. each answer arrives split, the way a response streams in
+  const encode = (s) => new TextEncoder().encode(s);
+  const answer = (pattern, tabId, ...chunks) => {
+    const { f } = watched.find((w) => w.filter.urls.includes(pattern));
+    f({ requestId: `${pattern}${tabId}`, tabId });
+    const stream = streams[`${pattern}${tabId}`];
+    if (!stream) return null;
+    for (const chunk of chunks) stream.ondata({ data: encode(chunk) });
+    stream.onstop();
+    return stream;
+  };
+  sent.length = 0;
+  const xs = answer('*://x.com/i/api/graphql/*', 30, '{"media":[{"sensitive_media_warning":{"adult_', 'content":true}}]}');
+  answer('*://x.com/i/api/graphql/*', 31, '{"sensitive_media_warning":{"adult_content":false,"graphic_violence":true}}');
+  answer('*://*.reddit.com/*', 32, '<article><shreddit-post post-title="pics" nsfw="" score="5">');
+  answer('*://*.reddit.com/*', 33, '<div class=" thing id-t3_1 over18 link">');
+  answer('*://*.reddit.com/*', 34, '<shreddit-post post-title="cat pics" score="5">');
+  answer('*://*.bsky.network/xrpc/*', 35, '{"labels":[{"src":"did:plc:x","val":"porn"}]}');
+  answer('*://*.bsky.network/xrpc/*', 36, '{"labels":[{"val":"graphic-media"}]}');
+  assert.equal(answer('*://x.com/i/api/graphql/*', -1, '{}'), null, 'no tab, nothing read');
+  assert.deepEqual(sent, [30, 32, 33, 35].map((tab) => [tab, 'porn/porn.html']));
+  assert.deepEqual(xs.written.map((d) => new TextDecoder().decode(d)), ['{"media":[{"sensitive_media_warning":{"adult_', 'content":true}}]}']);
+  assert.ok(xs.closed);
+  // every address read is one the manifest grants, or firefox would not hand over the answer
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../manifest.json'), 'utf8'));
+  const granted = manifest.permissions.filter((p) => p.includes('://')).map((p) => p.split('/')[2]);
+  for (const pattern of watched.flatMap((w) => w.filter.urls)) assert.ok(granted.includes(pattern.split('/')[2]), pattern);
+  assert.ok(watched.every((w) => w.extra.includes('blocking')));
+  sent.length = 0;
+  // history changes on the blocked sites reach their tab at once
+  assert.deepEqual(JSON.parse(JSON.stringify(on.historyFilter.url)), [{ hostEquals: 'x.com' }]);
+  on.history({ frameId: 0, tabId: 7, url: 'https://x.com/home' });
+  on.history({ frameId: 2, tabId: 7, url: 'https://x.com/i/frame' });
+  assert.deepEqual(reported, [[7, 'https://x.com/home', 0]]);
+  sent.length = 0;
   on.message('something else');
   on.message('chime');
   assert.equal(played.length, 1, 'the chime, and only on its own message');
@@ -973,8 +1081,8 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.ok(!pkg.webExt.ignoreFiles.some((f) => played[0] === f || played[0].startsWith(`${f}/`)), 'not left out of the package');
   const page = { '--d2t-bg': 'rgb(10 20 30)', '--d2t-fg': '#fff' };
   assert.deepEqual(
-    JSON.parse(JSON.stringify(saved)),
-    { theme: { ...page, '--d2t-card': 'rgb(10 20 30)', '--d2t-card-fg': '#fff', '--d2t-accent': '#0af' } },
+    JSON.parse(JSON.stringify(saved.theme)),
+    { ...page, '--d2t-card': 'rgb(10 20 30)', '--d2t-card-fg': '#fff', '--d2t-accent': '#0af' },
     'the field pair has a crafted value, so fields fall back to the page pair',
   );
   assert.equal(registered.length, 1);
@@ -988,9 +1096,17 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   await settle();
   assert.ok(registered[0].gone, 'the old stylesheet is unregistered');
   assert.equal(registered.length, 1, 'nothing to register for a colorless theme');
-  assert.deepEqual(JSON.parse(JSON.stringify(saved)), { theme: {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.theme)), {});
   assert.equal(typeof on.click, 'function', 'the toolbar button opens the settings');
   assert.match(on.farewell, /^https:\/\/[^#?]+$/, 'a plain https page, nothing about the user appended');
-  // android: no theme api; only the toolbar button is wired, no error
-  vm.runInContext(read('background.js'), vm.createContext({ browser: fakeBrowser(false), CSS, console, Audio }));
+  // android: no theme api, no error. a day later the list is due again, and a cut-off download keeps the last copy
+  saved.pornList.at -= 86_400_000;
+  download = 'one.test\n';
+  sent.length = 0;
+  background(false);
+  await settle();
+  assert.equal(fetched.length, 2);
+  on.navigate({ frameId: 0, tabId: 7, url: 'https://example.test/' });
+  assert.deepEqual(sent, [[7, 'porn/porn.html']]);
+  assert.equal(saved.pornList.domains.length, 1001);
 });

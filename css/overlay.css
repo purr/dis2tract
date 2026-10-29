@@ -133,6 +133,9 @@ html[data-dis2tract-blocked] body {
 /* the unlock: a quiet gray pill at the bottom, like screen time's "ignore limit" */
 #dis2tract .d2t-unlock { flex: none; width: 100%; max-width: 460px; margin-top: 32px; }
 #dis2tract .d2t-unlock p { margin: 0 auto 14px; font-size: 15px; }
+#dis2tract .d2t-unlock button + button { margin-left: 10px; }
+/* the porn page's clip, between the quote and the better thing to do */
+#dis2tract video.d2t-clip { display: block; max-width: 100%; max-height: 40vh; margin: 0 auto 24px; border-radius: 22px; background: #000; }
 #dis2tract button {
   height: 36px;
   margin: 0;

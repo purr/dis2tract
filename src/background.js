@@ -50,6 +50,90 @@ browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPag
 browser.runtime.onMessage.addListener((message) => {
   if (message === 'chime') new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
 });
+// porn sites: no feed rules, no unlock. the tab leaves for the extension's own page before the site loads.
+// the list is oisd's nsfw small (the porn sites among the top million domains, maintained, few false hits),
+// downloaded here, not kept in the repo: it stays current, and no hand-picked list of sites is published.
+// github serves it to any origin, so no host permission; it is gpl, and this way it is never redistributed.
+// fetched once a day; the last good copy stays in storage, so an offline start still blocks
+const PORN_LIST = 'https://raw.githubusercontent.com/sjhgvr/oisd/main/domainswild2_nsfw_small.txt';
+// the adult top-level domains, which the list also names whole. kept here rather than taken from the download:
+// a single word from a download (a broken line saying "com") would block the whole web
+const ADULT_TLDS = ['xxx', 'porn', 'sex', 'adult'];
+const DAY = 86_400_000;
+let porn = new Set(ADULT_TLDS);
+let pornAt = 0;
+
+async function updatePorn() {
+  if (Date.now() - pornAt < DAY) return;
+  const response = await fetch(PORN_LIST, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`http ${response.status}`);
+  // one domain per line, each covering its subdomains; comments start with #
+  const domains = (await response.text()).split('\n').map((line) => line.trim()).filter((line) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(line));
+  // a cut-off or changed download must not replace a good list
+  if (domains.length < 1000) throw new Error(`only ${domains.length} domains in the download`);
+  porn = new Set([...ADULT_TLDS, ...domains]);
+  pornAt = Date.now();
+  await browser.storage.local.set({ pornList: { at: pornAt, domains } });
+}
+
+// the host or any domain above it: www.example.com is caught by example.com
+const isPorn = (host) => host.split('.').some((_, i, parts) => porn.has(parts.slice(i).join('.')));
+// every navigation, in any frame: a page that embeds a listed site (reddit's redgifs players) goes to the porn page
+// too. checked again once the page commits: a redirect (a link shortener, an alias domain) shows its real address
+// only then, onBeforeNavigate sees the first one
+function guard({ frameId, tabId, url }) {
+  const u = new URL(url);
+  // a trailing dot ("tiktok.com.") is the same site to its server but matches no rule here, the content scripts'
+  // hosts included, so the tab goes to the address without it
+  const host = u.hostname.replace(/\.+$/, '');
+  if (isPorn(host)) browser.tabs.update(tabId, { url: browser.runtime.getURL('porn/porn.html') });
+  else if (frameId === 0 && host !== u.hostname) {
+    u.hostname = host;
+    browser.tabs.update(tabId, { url: u.href });
+  }
+}
+browser.webNavigation.onBeforeNavigate.addListener(guard);
+browser.webNavigation.onCommitted.addListener(guard);
+
+// sites with porn among everything else mark it in the data they load: x flags media "adult_content" (apart from
+// graphic_violence), reddit tags posts nsfw (new reddit's shreddit elements) or over18 (old reddit), bluesky labels
+// posts and accounts porn, sexual or nudity. those answers are read on their way to the page (passed on untouched)
+// and a tab that loaded any such content goes to the porn page: no word lists, so any language and any slang
+const LABELED = [
+  { urls: ['*://x.com/i/api/graphql/*'], types: ['xmlhttprequest'], adult: /"adult_content":\s*true/ },
+  { urls: ['*://*.reddit.com/*'], types: ['main_frame', 'xmlhttprequest'], adult: /<shreddit-[\w-]+\s[^>]*\bnsfw[\s=>]|class="[^"]*\bover18\b/ },
+  { urls: ['*://*.bsky.network/xrpc/*', '*://public.api.bsky.app/xrpc/*'], types: ['xmlhttprequest'], adult: /"val":"(porn|sexual|nudity)"/ },
+];
+for (const { urls, types, adult } of LABELED) {
+  browser.webRequest.onBeforeRequest.addListener(({ requestId, tabId }) => {
+    if (tabId < 0) return; // a request of no tab (a service worker): no page to send anywhere
+    const filter = browser.webRequest.filterResponseData(requestId);
+    const decoder = new TextDecoder();
+    let text = '';
+    filter.ondata = ({ data }) => {
+      filter.write(data); // first, so the page gets its data whatever happens below
+      text += decoder.decode(data, { stream: true });
+    };
+    filter.onstop = () => {
+      filter.close();
+      if (adult.test(text + decoder.decode())) browser.tabs.update(tabId, { url: browser.runtime.getURL('porn/porn.html') });
+    };
+  }, { urls, types }, ['blocking']);
+}
+
+// single-page sites change the address through the history api, and content.js only looks every 400 ms: a feed
+// address passed through faster (instagram's reels tab jumping to a reel) is reported to the tab right away
+const HOSTS = MATCHES.map((m) => /^\*:\/\/(\*\.)?([^/]+)\//.exec(m)).map(([, any, host]) => (any ? { hostSuffix: `.${host}` } : { hostEquals: host }));
+browser.webNavigation.onHistoryStateUpdated.addListener(({ frameId, tabId, url }) => {
+  // a tab whose content script has not started yet has no listener; it reads the address itself when it starts
+  if (frameId === 0) browser.tabs.sendMessage(tabId, { url }, { frameId: 0 }).catch(() => {});
+}, { url: HOSTS });
+browser.storage.local.get('pornList').then(({ pornList }) => {
+  if (pornList) [porn, pornAt] = [new Set([...ADULT_TLDS, ...pornList.domains]), pornList.at];
+  const update = () => updatePorn().catch((e) => console.error('dis2tract: porn list update failed, the last copy stays', e));
+  update();
+  setInterval(update, 60 * 60_000); // checked hourly, fetched once it is a day old
+});
 // opens after the extension is removed: someone else's page until dis2tract has its own. only this bare url
 // goes out, never the user's note or stats.
 browser.runtime.setUninstallURL('https://www.npr.org/2026/04/07/nx-s1-5775917/why-infinite-scrolls-inventor-wants-to-kill-his-creation');

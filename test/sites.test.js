@@ -6,15 +6,18 @@ const vm = require('node:vm');
 
 const ctx = vm.createContext({});
 for (const f of ['settings.js', 'sites.js', 'challenges.js', 'suggestions.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', f), 'utf8'), ctx);
-const { SITES, feedOf, looser, tighterPart, mergeSettings, siteFor, conversation, CHALLENGES, LIMITS, NEEDS, LATE } = ctx;
+const { SITES, feedOf, looser, tighterPart, mergeSettings, siteFor, conversation, CHALLENGES, LIMITS, NEEDS, LATE, SHAME, URGES, URGE_LATE } = ctx;
+// every question with its things to do: the block screen's and the porn page's
+const ANSWERS = [...NEEDS, LATE, ...URGES, URGE_LATE];
 
-test('every roast question and suggestion fits one line on a phone', () => {
-  const lines = [...NEEDS, LATE].flatMap(([question, ideas]) => [question, ...ideas.map(([text]) => text)]);
+test('every roast question, suggestion and porn page quote fits one line on a phone', () => {
+  const lines = [...ANSWERS.flatMap(([question, ideas]) => [question, ...ideas.map(([text]) => text)]), ...SHAME.flat()];
   for (const line of lines) assert.ok(line.length <= 38, `${line.length} characters: ${line}`);
+  assert.ok(SHAME.every((quote) => quote.length <= 2), 'a quote is one or two lines');
 });
 
 test('suggestion links are direct: https, never a search page', () => {
-  const urls = [...NEEDS, LATE].flatMap(([, ideas]) => ideas.map(([, url]) => url)).filter(Boolean);
+  const urls = ANSWERS.flatMap(([, ideas]) => ideas.map(([, url]) => url)).filter(Boolean);
   assert.ok(urls.length > 10);
   for (const url of urls) {
     const u = new URL(url);
@@ -166,8 +169,10 @@ test('manifest matches and host permissions cover exactly the hosts in SITES', (
   const matches = manifest.content_scripts.flatMap((cs) => cs.matches);
   const hosts = Object.values(SITES).flatMap((s) => s.hosts);
   assert.deepEqual(matches.map((m) => new URL(m.replace('*://', 'https://')).hostname).sort(), [...hosts].sort());
-  // background.js registers the theme stylesheet for the same matches, which needs them as host permissions
-  assert.deepEqual(manifest.permissions.filter((p) => p.includes('://')).sort(), [...matches].sort());
+  // background.js registers the theme stylesheet for the same matches, which needs them as host permissions; the
+  // only others are bluesky's data hosts, whose answers background.js reads for adult labels
+  const api = ['*://*.bsky.network/*', '*://public.api.bsky.app/*'];
+  assert.deepEqual(manifest.permissions.filter((p) => p.includes('://')).sort(), [...matches, ...api].sort());
 });
 
 test('search and profile urls are site-relative and encoded', () => {

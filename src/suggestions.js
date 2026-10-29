@@ -60,3 +60,56 @@ var NEEDS = [
 ];
 // after 23:00 the question is always this one
 var LATE = ['still up, scrolling?', [['phone away, lights off. now.']]];
+
+// the porn page (porn/porn.js): one of these under the title. they mock the giving in, and each says something
+// true about what it costs, so the sting carries a reason to stop
+var SHAME = [
+  ['pixels will not love you back.'],
+  ['all the hours spent on this', 'would have built your dream body.'],
+  ['escaping reality again, weakling?'],
+  ['the urge lasts minutes.', 'the regret lasts all day.'],
+  ['nobody ever wished they had', 'watched more porn.'],
+  ['a stranger on a screen gets your', 'best energy. your goals get none.'],
+  ['discipline is choosing what you', 'want most over what you want now.'],
+  ['every no makes the next one easier.'],
+  ['the weak obey every urge.', 'be the one who says no.'],
+  ['real people are out there.', 'they are not in this tab.'],
+  ['you would never let a friend', 'waste their life like this.'],
+  ['the person you want to be', 'closed this tab already.'],
+  ['this is not rest.', 'it is hiding.'],
+  ['cheap dopamine makes', 'everything else feel dull.'],
+  ['you are trading your drive', 'for ten minutes of nothing.'],
+  ['your future self is watching.', 'they are not impressed.'],
+  ['imagine this energy in the gym,', 'in your work, in a real date.'],
+  ['confidence is keeping promises', 'to yourself. keep this one.'],
+  ['you are not horny. you are bored.', 'go do something.'],
+  ['a screen cannot hold you,', 'call you, or miss you.'],
+  ['weakling move.', 'close the tab and prove otherwise.'],
+];
+// and one better thing to do, the way the block screen does it
+var URGES = [
+  ['urges fade in minutes. outlast it.', [
+    ['50 pushups, right now'],
+    ['cold shower, 2 minutes', timer(2)],
+    ['7-minute workout, follow along', WORKOUT],
+  ]],
+  ['bored? that is all this is.', [
+    ['solve one chess puzzle, then close', 'https://lichess.org/training'],
+    ['three monkeytype tests, beat your best', 'https://monkeytype.com/'],
+    ['walk the block, phone stays home'],
+  ]],
+  ['lonely? a screen will not fix it.', [
+    ['text a friend: "free tonight?"'],
+    ['call family until this timer ends', timer(5)],
+  ]],
+  ['stressed? breathe, do not escape.', [
+    ['5 minutes of box breathing', BREATHING],
+    ['write down what is bothering you'],
+  ]],
+  ['restless? spend it on your body.', [
+    ['20 squats, now'],
+    ['plank until this timer ends', timer(1)],
+    ['go for a run. 10 minutes.', timer(10)],
+  ]],
+];
+var URGE_LATE = ['up late? this is when it wins.', [['phone away, lights off. now.'], ['10 minutes of yoga nidra, lying down', NIDRA]]];

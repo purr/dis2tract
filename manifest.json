@@ -19,6 +19,9 @@
   },
   "permissions": [
     "storage",
+    "webNavigation",
+    "webRequest",
+    "webRequestBlocking",
     "*://www.youtube.com/*",
     "*://m.youtube.com/*",
     "*://x.com/*",
@@ -32,7 +35,9 @@
     "*://www.threads.com/*",
     "*://bsky.app/*",
     "*://www.linkedin.com/*",
-    "*://linkedin.com/*"
+    "*://linkedin.com/*",
+    "*://*.bsky.network/*",
+    "*://public.api.bsky.app/*"
   ],
   "background": {
     "scripts": [
