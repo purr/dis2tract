@@ -13,6 +13,7 @@
     document.body?.removeAttribute('inert');
   }
   const TRAIL = `trail:${siteId}`; // this site's run of items, kept a minute so a reload or new tab continues it
+  const PASS = 'dis2tract:pass'; // sessionStorage mark: this load is the reload after a stop, let it through
   const UNLOCK_MS = UNLOCK.minutes * 60_000;
   const EXTEND_MS = UNLOCK.extendMinutes * 60_000;
   const HOP_MS = 10 * 60_000; // a block on another site this recently means the scroll just moved apps
@@ -37,17 +38,20 @@
   let feedKey = ''; // which feed, for its settings switch
   let feedLabel = ''; // which feed, for the block screen
   let feedAt = 0; // the last moment the url was still a feed
+  let feedPassed = false; // background.js reported a feed address passed through between two looks
   let traversed = false; // the url change came from back/forward
-  let talking = false; // a conversation: no scroll budget
+  let unlimited = false; // a conversation, search results or a profile: no scroll budget
   let tweaked = null; // the url the site's tweaks are done for
   let tweakTries = 0;
   const chain = []; // distinct items viewed in a row, oldest first
   let scrolled = 0; // px scrolled down on this url
   const scrolledOn = new Map(); // per url, so coming back to a page resumes its budget
+  const moreOn = new Map(); // per url, how many more budgets the user waited for
   const lastTop = new WeakMap();
   const watchedRoots = new WeakSet(); // shadow roots with a play listener
   let pauseTicks = 0;
   let overlay = null;
+  let stopped = false; // this load was stopped before the site loaded: nothing of it is under the block
   let countedHref = null; // the blocked url already counted, so a redraw is not a second block
   let hopFrom = []; // other sites the user went for within HOP_MS before this one
 
@@ -61,43 +65,47 @@
   // an unlock tried in the morning left the feed open all day, and the block seemed broken
   function left() {
     const last = unlocks.at(-1);
-    if (last?.site !== siteId || last.doneAt || Date.now() >= last.at + budget(last) + cooldown(last)) return 0;
+    if (last?.site !== siteId || last.doneAt || lateNight() || Date.now() >= last.at + budget(last) + cooldown(last)) return 0;
     return budget(last) - (spent.at === last.at ? spent.ms : 0) - unsaved;
   }
   const unlocked = () => left() > 0;
+  const scrollCap = () => settings.scrollScreens * innerHeight * (1 + (moreOn.get(href) ?? 0));
   const active = () => settings.sites[siteId] !== false && !unlocked();
-  // when the next unlock may start: Infinity once today's are used up
+  // when bedtime ends: the next morning hour from now
+  function morning() {
+    const d = new Date(Date.now());
+    if (d.getHours() >= UNLOCK.bedtime[1]) d.setDate(d.getDate() + 1);
+    d.setHours(UNLOCK.bedtime[1], 0, 0, 0);
+    return d.getTime();
+  }
+  // when the next unlock may start: Infinity once today's are used up, never before bedtime ends
   function nextUnlockAt() {
     if (unlocks.filter((u) => today(u.at)).length >= UNLOCK.perDay) return Infinity;
     const last = unlocks.at(-1);
-    return end(last) + cooldown(last);
+    return Math.max(end(last) + cooldown(last), lateNight() ? morning() : 0);
   }
-  // the extra minute: only for this site's unlock, only if it was the latest anywhere, once, and only right after it ran out
+  // the extra minute: only for this site's unlock, only if it was the latest anywhere, once, only right after it
+  // ran out, and not at bedtime
   function canExtend() {
     const last = unlocks.at(-1);
-    return last?.site === siteId && !last.extended && last.doneAt > Date.now() - UNLOCK.extendGraceMinutes * 60_000;
+    return last?.site === siteId && !last.extended && !lateNight() && last.doneAt > Date.now() - UNLOCK.extendGraceMinutes * 60_000;
   }
-  const pick = (list) => list[Math.floor(Math.random() * list.length)];
-  const words = (s) => s.split(/\s+/).filter(Boolean).length;
+  // how many characters an edit inserted: what lies between the part both texts start with and the part both end
+  // with. typing over a selection inserts one, a paste over the same selection inserts all of it
+  function added(before, after) {
+    let start = 0;
+    while (start < before.length && start < after.length && before[start] === after[start]) start++;
+    let end = 0;
+    while (end < before.length - start && end < after.length - start && before.at(-1 - end) === after.at(-1 - end)) end++;
+    return after.length - start - end;
+  }
   const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  function h(tag, props = {}, ...kids) {
-    const el = document.createElement(tag);
-    for (const [k, v] of Object.entries(props)) {
-      if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-      else el.setAttribute(k, v);
-    }
-    el.append(...kids);
-    return el;
-  }
-  // a suggestion line: a link when the idea has one
-  const idea = ([text, url]) => h('p', { class: 'd2t-idea' }, url ? h('a', { href: url }, text) : text);
   const ago = (t) => {
     const m = Math.floor((Date.now() - t) / 60_000);
     return m < 1 ? 'just now' : `${m} min ago`;
   };
 
-  // each sentence on its own line, so a line never breaks inside one
+  // title and the sentences under it (sub() in ui.js)
   const TEXT = {
     feed: () => ['no feed', [`${site.name} ${feedLabel} is an endless feed.`, 'go somewhere on purpose.']],
     chain: () => [`${settings.chainLimit} in a row`, ['one after another is the feed again.']],
@@ -130,17 +138,40 @@
     const me = site.me ?? (handle && site.profile(handle));
     const links = h('nav', { 'aria-label': 'go to' }, ...[me && ['my profile', me], ...site.links].filter(Boolean).map(([label, path]) => h('a', { href: path }, label)));
     // one random roast per screen, already answered with one thing to do right now
-    const hour = new Date(Date.now()).getHours();
-    const [question, ideas] = hour >= 23 || hour < 5 ? LATE : pick(NEEDS);
-    const roast = h('div', { class: 'd2t-answer' }, h('p', { class: 'd2t-ask' }, question), idea(pick(ideas)));
     return h('div', { class: 'd2t-card' },
       h('h2', { id: 'dis2tract-title' }, title),
-      h('p', { class: 'd2t-sub' }, ...sentences.map((s) => h('span', {}, s))),
-      go, links, roast);
+      sub(sentences),
+      go, links, answer(lateNight() ? LATE : pick(NEEDS)));
   }
 
-  function unlockBox() {
+  // past the scroll limit on a page opened on purpose (a long thread, a subreddit; search results and profiles have
+  // no limit): another full budget for this page, as often as needed, each after a short wait so it stays a choice
+  function moreScroll() {
+    const more = `keep scrolling: ${settings.scrollScreens} more screens`;
+    const button = h('button', {
+      type: 'button',
+      onclick: () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        let left = UNLOCK.moreScrollSeconds;
+        button.textContent = `${more} in ${left} s`;
+        const timer = setInterval(() => {
+          if (!button.isConnected) clearInterval(timer);
+          else if (--left > 0) button.textContent = `${more} in ${left} s`;
+          else {
+            clearInterval(timer);
+            moreOn.set(href, (moreOn.get(href) ?? 0) + 1);
+            evaluate();
+          }
+        }, 1000);
+      },
+    }, more);
+    return h('p', {}, button);
+  }
+
+  function unlockBox(reason) {
     const box = h('div', { class: 'd2t-unlock' });
+    if (reason === 'scroll') box.append(moreScroll());
     if (canExtend()) {
       box.append(
         h('button', { type: 'button', onclick: extend }, `+${UNLOCK.extendMinutes} min to finish up`),
@@ -150,7 +181,10 @@
     }
     const next = nextUnlockAt();
     if (next > Date.now()) {
-      box.append(h('p', {}, next === Infinity ? `no unlocks left today: ${UNLOCK.perDay} a day.` : `next unlock at ${clock(next)}. ${UNLOCK.perDay} a day, ${UNLOCK.cooldownMinutes} min apart.`));
+      let why = `next unlock at ${clock(next)}. ${UNLOCK.perDay} a day, ${UNLOCK.cooldownMinutes} min apart.`;
+      if (next === Infinity) why = `no unlocks left today: ${UNLOCK.perDay} a day.`;
+      else if (lateNight()) why = `bedtime: no unlocks until ${clock(next)}.`;
+      box.append(h('p', {}, why));
     } else {
       const open = h('button', { type: 'button', onclick: () => openSheet(open) }, `unlock ${site.name} for ${UNLOCK.minutes} min`);
       box.append(open);
@@ -208,36 +242,40 @@
       'aria-label': c.ask, autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
       inputmode: c.live ? 'text' : 'numeric', placeholder: 'your answer', ...(c.live && { rows: '3' }),
     });
-    const answer = () => {
-      if (done || !input.value.trim()) return; // an empty enter is a slip, not an answer
+    // the answer is only what arrived one character at a time. a paste, a drop, a keyboard's clipboard chip,
+    // dictation and swiped words land many at once and are undone. text another extension slips past these
+    // listeners (one that re-enables paste can swallow the events) never reaches `typed`, the only thing judged
+    let typed = '';
+    const submit = () => {
+      if (input.value !== typed) input.value = typed;
+      if (done || !typed.trim()) return; // an empty enter is a slip, not an answer
       // a wrong answer in another tab since this challenge appeared: its wait holds here too, or a second open
       // sheet would be a way around it
       if (banUntil > Date.now()) return pause(sheet, close);
       done = true;
-      if (c.check(input.value)) unlock();
+      if (c.check(typed)) unlock();
       else penalize(sheet, close, c.wrong);
     };
-    let typed = '';
-    input.addEventListener('input', () => {
-      // several words landing at once come from a keyboard's clipboard chip or dictation, which fire no paste
-      // event: they are undone, so the sentence has to be typed
-      if (words(input.value) - words(typed) > 2) input.value = typed;
+    input.addEventListener('input', (e) => {
+      // and only real keys: a script (a bookmarklet, the console, a userscript) could set the text one character
+      // at a time and fire input itself, but its events are never trusted
+      if (!e.isTrusted || added(typed, input.value) > 1) input.value = typed;
       typed = input.value;
-      if (c.live && c.check(typed)) answer();
+      if (c.live && c.check(typed)) submit();
     });
     // enter in the textarea answers instead of starting a new line. beforeinput, because key events are
     // swallowed at the window while the block screen is up
     input.addEventListener('beforeinput', (e) => {
       if (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph') return;
       e.preventDefault();
-      answer();
+      submit();
     });
     for (const type of ['paste', 'drop']) input.addEventListener(type, (e) => e.preventDefault());
     const form = h('form', {
       class: c.live ? 'd2t-field d2t-plain d2t-multi' : 'd2t-field d2t-plain',
       onsubmit: (e) => {
         e.preventDefault();
-        answer();
+        submit();
       },
     }, input);
     const ask = `${c.ask}. a wrong enter means a new one in ${UNLOCK.penaltySeconds} s.`;
@@ -325,10 +363,12 @@
   function record() {
     countedHref = href;
     const now = Date.now();
+    const mine = recent.find((r) => r.site === siteId)?.at ?? 0;
     hopFrom = recent.filter((r) => r.site !== siteId && now - r.at < HOP_MS);
     recent = [...hopFrom, { site: siteId, at: now }];
     browser.storage.local.set({ recent });
-    if (hopFrom.length) bump('hops');
+    // a hop is arriving here from another site's feed; more blocked pages here, or reloads, are not new hops
+    if (hopFrom.some((r) => r.at > mine)) bump('hops');
   }
 
   function show(reason) {
@@ -343,10 +383,9 @@
       if (ready && href !== countedHref) record();
       // mirror pinned at the top, the block centered, the unlock at the bottom
       overlay = h('div', { id: 'dis2tract', 'data-reason': reason, 'data-state': state, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dis2tract-title', tabindex: '-1', ...(fresh && { 'data-enter': '' }) },
-        ...[mirror(), card(reason), unlockBox()].filter(Boolean));
+        ...[mirror(), card(reason), unlockBox(reason)].filter(Boolean));
       if (fresh) chime();
-      // cssom, not a style attribute: a strict page csp blocks style attributes but not setProperty
-      for (const [k, v] of Object.entries(theme)) overlay.style.setProperty(k, v);
+      paint(overlay, theme);
       pauseAll();
       // a fullscreen player sits in the top layer, above any z-index, and would hide the block screen.
       // a refused exit only means the page stays fullscreen; there is nothing else to try
@@ -414,7 +453,7 @@
   function blocked() {
     if (inFeed) return 'feed';
     if (settings.chainLimit && chain.length > settings.chainLimit) return 'chain';
-    if (!talking && settings.scrollScreens && scrolled >= settings.scrollScreens * innerHeight) return 'scroll';
+    if (!unlimited && settings.scrollScreens && scrolled >= scrollCap()) return 'scroll';
     return null;
   }
 
@@ -428,6 +467,7 @@
     if (onFeedUrl) feedAt = Date.now();
     tweak();
     const reason = settings.sites[siteId] !== false && blocked();
+    if (stopped && (!reason || unlocked())) return reopen();
     if (reason && unlocked()) {
       hide();
       spend();
@@ -438,6 +478,14 @@
     }
     if (overlay && ++pauseTicks % 3 === 0) pauseAll(); // players that load later, every ~1.2 s while blocked
     if (!overlay) for (const m of playing) if (m.paused) playing.delete(m); // remember only what still plays
+  }
+
+  // a stopped page may show after all (unlocked, feed switched off): it loads for real, marked so that load is
+  // let through instead of stopped again
+  function reopen() {
+    stopped = false;
+    sessionStorage.setItem(PASS, location.href);
+    location.reload();
   }
 
   function onUrl() {
@@ -453,9 +501,10 @@
     tweakTries = 0;
     // instagram's /reels/ swaps its url to a random /reels/CODE/ a moment after load: that item is still the
     // feed. back/forward is the user leaving, so an item reached that way is a real page.
-    inFeed = Boolean(feed) || (!traversed && inFeed && key !== null && Date.now() - feedAt < 3000);
+    inFeed = Boolean(feed) || (!traversed && (inFeed || feedPassed) && key !== null && Date.now() - feedAt < 3000);
+    feedPassed = false;
     traversed = false;
-    talking = conversation(u);
+    unlimited = conversation(u) || site.free(u);
     // back to an earlier item steps out of the chain instead of growing it, so the back button escapes a block
     const seen = key ? chain.indexOf(key) : -1;
     if (!key) chain.length = 0;
@@ -485,10 +534,11 @@
     const d = top - (lastTop.get(el) ?? top);
     lastTop.set(el, top);
     // a jump over a screen is the site restoring a position, not the user scrolling
-    if (d <= 0 || d > innerHeight || overlay || talking || !active()) return;
+    if (d !== 0 && Math.abs(d) <= innerHeight) lastInput = Date.now(); // autoscroll and the scrollbar send no other input
+    if (d <= 0 || d > innerHeight || overlay || unlimited || !active()) return;
     scrolled += d;
     scrolledOn.set(href, scrolled);
-    if (settings.scrollScreens && scrolled >= settings.scrollScreens * innerHeight) evaluate();
+    if (settings.scrollScreens && scrolled >= scrollCap()) evaluate();
   }, { capture: true, passive: true });
   window.addEventListener('popstate', () => {
     traversed = true;
@@ -510,24 +560,29 @@
   // reach of every pause path above. so the page's own play() is wrapped: while the block screen is up nothing
   // starts, and whatever started before is remembered to be paused. the set is emptied on every pause, so it only
   // ever holds what is playing now
+  // puts a wrapper of ours over a page method. an exported wrapper dies with this script's sandbox (an extension
+  // update, reload or disable), and a page calling it then throws until reload. so each wrapper carries the page's
+  // own method along, and the next instance of this script wraps that one, never a dead wrapper of an old instance.
+  // after a disable nothing comes next: the dead wrappers stay until the tab reloads
+  function wrap(proto, name, make) {
+    const page = proto[name].dis2tractPage ?? proto[name];
+    exportFunction(make(page), proto, { defineAs: name });
+    proto[name].dis2tractPage = page;
+  }
   const playing = new Set();
-  const media = window.wrappedJSObject.HTMLMediaElement.prototype;
-  const play = media.play;
-  exportFunction(function () {
+  wrap(window.wrappedJSObject.HTMLMediaElement.prototype, 'play', (play) => function () {
     playing.add(this);
     if (!overlay) return play.call(this);
     this.pause();
     return window.wrappedJSObject.Promise.resolve();
-  }, media, { defineAs: 'play' });
+  });
   // pages call focus() on their own players and feeds all the time (tiktok, youtube, x). behind the block screen
   // that pulled the cursor out of the answer field mid-word, so while it is up such calls are ignored. our own
   // focus() calls go through firefox's xray to the original method and are not affected
-  const elements = window.wrappedJSObject.HTMLElement.prototype;
-  const focus = elements.focus;
-  exportFunction(function (options) {
+  wrap(window.wrappedJSObject.HTMLElement.prototype, 'focus', (focus) => function (options) {
     if (overlay && !overlay.contains(this)) return;
     return focus.call(this, options);
-  }, elements, { defineAs: 'focus' });
+  });
   // tab focus stays in the block screen: focus that lands outside it (tabbing past the end) goes back to the
   // field the user was in, not to the dialog, so typing carries on
   let lastFocus = null;
@@ -544,10 +599,16 @@
     // the wait after a wrong answer only lengthens the next pause. no redraw: that removed the open sheet, so a
     // wrong answer used to drop the user back on the block screen without a word
     if (changes.unlockBan) banUntil = changes.unlockBan.newValue ?? 0;
-    if (!['settings', 'unlocks', 'theme', 'pending'].some((k) => k in changes)) return;
+    // new theme colors are painted onto the open block screen, not redrawn: a theme that changes all the time
+    // (one following the tab or the time of day) would close an open unlock sheet over and over
+    if (changes.theme) {
+      theme = changes.theme.newValue ?? {};
+      overlay?.removeAttribute('style');
+      if (overlay) paint(overlay, theme);
+    }
+    if (!['settings', 'unlocks', 'pending'].some((k) => k in changes)) return;
     if (changes.settings) settings = mergeSettings(changes.settings.newValue);
     if (changes.unlocks) unlocks = Array.isArray(changes.unlocks.newValue) ? changes.unlocks.newValue : [];
-    if (changes.theme) theme = changes.theme.newValue ?? {};
     if (changes.pending) pendingAt = changes.pending.newValue?.at ?? 0;
     if (overlay) overlay.dataset.state = ''; // stale: show() rebuilds it in place with the new values
     // a feed switched off or on changes what this url is
@@ -555,7 +616,54 @@
     else evaluate();
   });
 
+  // background.js reports every history change of the page, so a new address is judged right away instead of at
+  // the next look, before the site has drawn much of a feed. and a feed address the page already left again
+  // (between two looks) still arms the carry, so the item it jumped to counts as the feed
+  browser.runtime.onMessage.addListener((message) => {
+    if (!message?.url) return;
+    const reported = message.url.split('#')[0];
+    const now = location.href.split('#')[0];
+    const feed = reported !== now && reported !== href && feedOf(siteId, new URL(message.url), settings.toggles);
+    if (feed) {
+      [feedKey, feedLabel] = feed;
+      feedAt = Date.now();
+      feedPassed = true;
+      // already looked at the item it jumped to: that item is the feed
+      if (now === href && key !== null && !traversed) inFeed = true;
+    }
+    if (now !== href) onUrl();
+    else evaluate();
+  });
+
+  // a click on a link to a feed becomes a full load of it, which stops before the site's own scripts run (see
+  // below). otherwise the site's router fetches and draws the whole feed before this script can block it.
+  // a new tab, a modified click or an unlocked site goes its usual way
+  window.addEventListener('click', (e) => {
+    if (!ready || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const link = e.target?.closest?.('a[href]');
+    if (!link || link.target === '_blank') return;
+    const u = new URL(link.href);
+    if (u.host !== location.host || settings.sites[siteId] === false || unlocked() || !feedOf(siteId, u, settings.toggles)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    location.assign(u.href);
+  }, true);
+
   onUrl(); // with defaults, so a feed is covered before storage answers and never flashes
+  // a feed opened from scratch stops loading right here, before the site's own scripts and the feed itself: nothing
+  // of it runs or downloads behind the block. sessionStorage is the one place the reload mark reopen() needs
+  // survives a reload and can be read at once
+  let pass = null;
+  try {
+    pass = sessionStorage.getItem(PASS) === location.href;
+    sessionStorage.removeItem(PASS);
+  } catch {
+    // storage refused on this site: a stop could not be undone by a marked reload, so the page is not stopped
+  }
+  if (pass === false && overlay && inFeed) {
+    window.stop();
+    stopped = true;
+  }
   Promise.all([loadSettings(), browser.storage.local.get(['unlocks', 'spent', 'theme', 'unlockBan', 'pending', 'recent', TRAIL])]).then(([s, stored]) => {
     settings = s;
     // a reload or a new tab within a minute continues the run of items, and the feed this item was carried from

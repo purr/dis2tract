@@ -75,6 +75,7 @@
         "css/overlay.css"
       ],
       "js": [
+        "src/ui.js",
         "src/settings.js",
         "src/sites.js",
         "src/challenges.js",

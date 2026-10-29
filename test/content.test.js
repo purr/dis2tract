@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '../src', f), 'utf8');
 const settle = () => new Promise((r) => setImmediate(r));
-const SCRIPTS = ['settings.js', 'sites.js', 'challenges.js', 'suggestions.js', 'content.js'];
+const SCRIPTS = ['ui.js', 'settings.js', 'sites.js', 'challenges.js', 'suggestions.js', 'content.js'];
 // local noon, so "today" never straddles midnight in any timezone the tests run in
 const NOON = new Date(2026, 9, 27, 12, 0).getTime();
 const MIN = 60_000;
@@ -92,13 +92,16 @@ class El {
 }
 
 // setup(doc, root) runs before the scripts, to put the page in a starting state
-function boot(url, stored = {}, setup = () => {}) {
+// session: a Map standing in for the tab's sessionStorage; without one the page has none, as when a site refuses it
+function boot(url, stored = {}, setup = () => {}, session = null) {
   const clock = { now: NOON };
   const data = structuredClone(stored);
   const changeListeners = [];
+  const messageListeners = []; // what background.js sends this tab
   const doc = { listeners: {}, body: null, activeElement: null, cookie: '', visibilityState: 'visible' };
   const root = new El('html', doc);
-  const win = { listeners: {} };
+  let stops = 0;
+  const win = { listeners: {}, stop: () => { stops += 1; } };
   Object.assign(doc, {
     documentElement: root,
     scrollingElement: root,
@@ -118,11 +121,14 @@ function boot(url, stored = {}, setup = () => {}) {
   setup(doc, root);
   const loc = new URL(url);
   const assigned = [];
+  const reloads = [];
   const location = {
     get href() { return loc.href; },
     set href(v) { loc.href = new URL(v, loc).href; },
     get hostname() { return loc.hostname; },
+    get host() { return loc.host; },
     assign(v) { assigned.push(v); },
+    reload() { reloads.push(loc.href); },
   };
   const timers = [];
   const chimes = []; // every chime asked of the background page
@@ -153,6 +159,9 @@ function boot(url, stored = {}, setup = () => {}) {
     window: win,
     queueMicrotask,
     exportFunction: (fn, target, { defineAs }) => { target[defineAs] = fn; },
+    ...(session && {
+      sessionStorage: { getItem: (k) => session.get(k) ?? null, setItem: (k, v) => session.set(k, String(v)), removeItem: (k) => session.delete(k) },
+    }),
     setTimeout: (f) => f(), // the sheet's closing delay, run at once
     setInterval: (f, ms) => timers.push({ f, ms }),
     clearInterval: (id) => { timers[id - 1] = null; },
@@ -163,6 +172,7 @@ function boot(url, stored = {}, setup = () => {}) {
         sendMessage: async (message) => {
           if (message === 'chime') chimes.push(clock.now);
         },
+        onMessage: { addListener: (f) => messageListeners.push(f) },
       },
     },
   });
@@ -178,6 +188,8 @@ function boot(url, stored = {}, setup = () => {}) {
     clock,
     chimes,
     assigned,
+    reloads,
+    stops: () => stops,
     overlay,
     reason: () => overlay()?.getAttribute('data-reason') ?? null,
     find: (pred) => overlay()?.find(pred) ?? null,
@@ -212,6 +224,22 @@ function boot(url, stored = {}, setup = () => {}) {
     touch: () => {
       for (const f of win.listeners.pointerdown) f({});
     },
+    // background.js reporting an address the page passed through
+    passed: (url) => {
+      for (const f of messageListeners) f({ url });
+    },
+    // the site's router changing the address, before the next look
+    go: (v) => {
+      location.href = v;
+    },
+    // a plain left click on a link; returns whether the page's own handlers were kept from it
+    click(href, extra = {}) {
+      let stopped = false;
+      const link = { href: new URL(href, location.href).href, target: '' };
+      const e = { button: 0, target: { closest: () => link }, preventDefault() { stopped = true; }, stopImmediatePropagation() {}, ...extra };
+      for (const f of win.listeners.click ?? []) f(e);
+      return stopped;
+    },
     nav(v) {
       location.href = v;
       t.tick();
@@ -237,12 +265,11 @@ function startChallenge(t, site) {
   return { input, shown: t.find((n) => n.getAttribute('class') === 'd2t-sentence').textContent, form: input.parentNode };
 }
 
-// types like a person: one word per input event
+// types like a person: one character per input event
 function type(input, text) {
-  const ws = text.split(' ');
-  for (let i = 1; i <= ws.length; i++) {
-    input.value = ws.slice(0, i).join(' ');
-    input.fire('input');
+  for (let i = 1; i <= text.length; i++) {
+    input.value = text.slice(0, i);
+    input.fire('input', { isTrusted: true });
   }
 }
 
@@ -340,7 +367,7 @@ test('a settings write keeps the feed carry and the scroll budget', async () => 
   t.nav('https://www.instagram.com/reels/C0de/');
   await t.setStorage({ settings: { version: 2, note: 'hi' } });
   assert.equal(t.reason(), 'feed');
-  const x = boot('https://x.com/jack');
+  const x = boot('https://x.com/i/bookmarks');
   await settle();
   x.scroll(0);
   for (let top = 500; top <= 7000; top += 500) x.scroll(top);
@@ -471,6 +498,58 @@ test('unlock minutes stop while nothing plays and nobody touches the page', asyn
   const read = t.data.spent.ms - paused;
   assert.ok(read > 9000 && read <= 10_000, 'input keeps the minutes running for 10 s: scrolling a text feed counts');
   assert.equal(t.reason(), null);
+  t.scroll(0);
+  t.scroll(300); // autoscroll or the scrollbar: scrolling with no other input
+  await t.run(MIN);
+  assert.ok(t.data.spent.ms - paused - read > 9000, 'scrolling itself counts as use');
+});
+
+test('a jump into a feed blocks at once: a link click becomes a stopped full load, a router change is judged when reported', async () => {
+  const t = boot('https://www.youtube.com/watch?v=abc');
+  await settle();
+  assert.equal(t.click('/'), true, 'the site never gets the click');
+  assert.deepEqual(t.assigned, ['https://www.youtube.com/'], 'a full load instead, which stops at its start');
+  assert.equal(t.click('/@someone'), false, 'other links work as usual');
+  assert.equal(t.click('/', { ctrlKey: true }), false, 'a new tab loads, and stops, by itself');
+  t.go('https://www.youtube.com/'); // the router got there some other way
+  assert.equal(t.reason(), null);
+  t.passed('https://www.youtube.com/');
+  assert.equal(t.reason(), 'feed', 'blocked when reported, not at the next look');
+  const open = boot('https://www.youtube.com/watch?v=abc', { unlocks: [{ site: 'youtube', at: NOON }] });
+  await settle();
+  assert.equal(open.click('/'), false, 'unlocked: the feed opens the usual way');
+});
+
+test('a feed address the page passed through between two looks still makes its item the feed', async () => {
+  const t = boot('https://www.instagram.com/natgeo/');
+  await settle();
+  t.passed('https://www.instagram.com/reels/'); // reported by background.js, gone before the next look
+  t.nav('https://www.instagram.com/reels/C0de/');
+  assert.equal(t.reason(), 'feed');
+  const late = boot('https://www.instagram.com/natgeo/');
+  await settle();
+  late.nav('https://www.instagram.com/reels/C0de/'); // the report arrives after the look at the item
+  assert.equal(late.reason(), null);
+  late.passed('https://www.instagram.com/reels/');
+  assert.equal(late.reason(), 'feed');
+  const profile = boot('https://www.instagram.com/natgeo/');
+  await settle();
+  profile.passed('https://www.instagram.com/explore/');
+  assert.equal(profile.reason(), null, 'a page that is not an item is left alone');
+});
+
+test('a new instance of the script (an update or reload) wraps the page\'s own play(), not a dead wrapper', async () => {
+  const t = boot('https://www.youtube.com/@someone');
+  await settle();
+  const proto = t.win.wrappedJSObject.HTMLMediaElement.prototype;
+  const page = proto.play.dis2tractPage;
+  // the old instance's sandbox is gone: its wrapper throws, with the page's own play() still carried on it
+  proto.play = Object.assign(() => { throw new Error('can\'t access dead object'); }, { dis2tractPage: page });
+  vm.runInContext(read('content.js'), t.ctx, { filename: 'content.js' });
+  const video = { paused: true, ended: false, pause() { this.paused = true; } };
+  proto.play.call(video);
+  assert.equal(video.paused, false);
+  assert.equal(proto.play.dis2tractPage, page);
 });
 
 test('a block that appears while browsing fades in and chimes; the first paint and a redraw do neither', async () => {
@@ -483,10 +562,13 @@ test('a block that appears while browsing fades in and chimes; the first paint a
   t.nav('https://www.youtube.com/');
   assert.equal(t.overlay().getAttribute('data-enter'), '');
   assert.equal(t.chimes.length, 1);
-  await t.setStorage({ theme: { '--d2t-bg': '#000000' } });
-  assert.equal(t.overlay().style.props['--d2t-bg'], '#000000', 'redrawn with the new values');
-  assert.equal(t.overlay().getAttribute('data-enter'), null, 'in place');
+  await t.setStorage({ settings: { version: 2, note: 'hi' } });
+  assert.equal(t.overlay().getAttribute('data-enter'), null, 'a redraw replaces it in place');
   assert.equal(t.chimes.length, 1);
+  t.button('unlock youtube').fire('click');
+  await t.setStorage({ theme: { '--d2t-bg': '#000000' } });
+  assert.equal(t.overlay().style.props['--d2t-bg'], '#000000', 'new theme colors are painted on');
+  assert.ok(t.sheet(), 'and an open unlock sheet stays');
   const quiet = boot('https://www.youtube.com/@someone', { settings: { version: 2, chime: false } });
   await settle();
   quiet.nav('https://www.youtube.com/');
@@ -525,7 +607,7 @@ test('a wrong number: the right answer, a wait, then a new challenge in the same
   assert.equal(shown, '31 × 6 + 50');
   form.fire('submit');
   assert.equal(t.sheet().querySelector('input'), input, 'an empty enter is a slip, not an answer');
-  input.value = '7';
+  type(input, '7');
   form.fire('submit');
   form.fire('submit');
   await settle();
@@ -542,16 +624,30 @@ test('a wrong number: the right answer, a wait, then a new challenge in the same
   assert.ok(t.sheet().querySelector('input'), 'a new challenge');
 });
 
-test('a whole sentence arriving in one input (clipboard chip, dictation) is undone', async () => {
+test('only text typed one character at a time counts: pastes in any form are undone or ignored', async () => {
   const t = boot('https://x.com/home');
   await settle();
-  const { input, shown } = startChallenge(t, 'x');
+  const { input, shown, form } = startChallenge(t, 'x');
   type(input, 'apple');
-  input.value = shown;
-  input.fire('input');
+  input.value = shown; // a clipboard chip or dictation: many characters in one input event
+  input.fire('input', { isTrusted: true });
   assert.equal(input.value, 'apple');
+  input.value = 'xyzab'; // pasted over the selected word: same length, still five characters at once
+  input.fire('input', { isTrusted: true });
+  assert.equal(input.value, 'apple');
+  input.value = 'apples'; // a script typing for the user: one character, but an event no key made
+  input.fire('input', { isTrusted: false });
+  assert.equal(input.value, 'apple');
+  input.value = 'x'; // typed over the selected word: one character
+  input.fire('input', { isTrusted: true });
+  assert.equal(input.value, 'x');
+  // an extension that re-enables paste swallowed the events: the text never reached the listener
+  input.value = shown;
+  form.fire('submit');
+  assert.equal(input.value, 'x', 'thrown away on enter');
   await settle();
   assert.equal(t.reason(), 'feed');
+  assert.equal(t.data.unlocks, undefined);
 });
 
 test('enter on a typo in the sentence is a wrong answer too, and never says which word', async () => {
@@ -581,6 +677,24 @@ test('never mind goes back to the unlock button without a penalty', async () => 
   const layer = t.sheet().parentNode;
   layer.fire('click', { target: layer });
   assert.equal(t.sheet(), null, 'a tap outside the sheet closes it too');
+});
+
+test('bedtime: from 23:00 to 5:00 no unlock starts, and one still running ends', async () => {
+  const at = (h, m) => new Date(2026, 9, 27, h, m).getTime();
+  const t = boot('https://x.com/home');
+  t.clock.now = at(23, 30);
+  await settle();
+  t.tick();
+  assert.match(t.unlockText(), /^bedtime: no unlocks until /);
+  assert.equal(t.button('unlock'), null);
+  const u = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: at(22, 58) }] });
+  u.clock.now = at(22, 59);
+  await settle();
+  assert.equal(u.reason(), null, 'unlocked before bedtime');
+  u.clock.now = at(23, 0);
+  u.tick();
+  assert.equal(u.reason(), 'feed');
+  assert.equal(u.button('+1 min'), null, 'no extra minute at bedtime either');
 });
 
 test('unlocks: spaced across all sites, a daily cap, and the old storage shape is ignored', async () => {
@@ -630,6 +744,10 @@ test('the mirror names the other apps the user went for just before, and only th
   await settle();
   assert.equal(mirror(t), 'x 2 min ago, youtube just now, now tiktok. same urge, new app.');
   assert.equal(t.data.stats.hops, 1);
+  t.nav('https://www.tiktok.com/@user');
+  t.nav('https://www.tiktok.com/following');
+  await settle();
+  assert.equal(t.data.stats.hops, 1, 'another blocked page here is not another hop');
   const calm = boot('https://www.tiktok.com/foryou', { recent: [{ site: 'x', at: NOON - 30 * MIN }] });
   await settle();
   assert.equal(mirror(calm), undefined, 'an old attempt elsewhere is not a hop, and there is no count to show');
@@ -715,7 +833,7 @@ test('youtube watch pages ask for theater mode, unless it is switched off', asyn
 });
 
 test('scroll budget: 12 screens, restore jumps ignored, reset by navigation', async () => {
-  const t = boot('https://x.com/jack');
+  const t = boot('https://x.com/i/bookmarks');
   await settle();
   t.scroll(0);
   t.scroll(50_000); // a site restoring its position
@@ -725,6 +843,52 @@ test('scroll budget: 12 screens, restore jumps ignored, reset by navigation', as
   assert.equal(t.reason(), 'scroll');
   t.nav('https://x.com/jack/status/1');
   assert.equal(t.reason(), null);
+});
+
+test('search results and profiles have no scroll budget', async () => {
+  for (const url of ['https://x.com/search?q=cats', 'https://x.com/jack', 'https://www.tiktok.com/@user']) {
+    const t = boot(url);
+    await settle();
+    t.scroll(0);
+    for (let top = 500; top <= 30_000; top += 500) t.scroll(top);
+    assert.equal(t.reason(), null, url);
+  }
+});
+
+test('past the scroll limit, keep scrolling gives the page another budget after a wait, as often as needed', async () => {
+  const t = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  t.scroll(0);
+  for (let top = 500; top <= 12_000; top += 500) t.scroll(top);
+  assert.equal(t.reason(), 'scroll');
+  t.button('keep scrolling').fire('click');
+  t.seconds(9);
+  assert.equal(t.reason(), 'scroll', 'not before the wait is over');
+  t.seconds(1);
+  assert.equal(t.reason(), null);
+  for (let top = 12_500; top < 24_000; top += 500) t.scroll(top);
+  assert.equal(t.reason(), null, 'a second full budget');
+  t.scroll(24_000);
+  assert.equal(t.reason(), 'scroll');
+  assert.ok(t.button('keep scrolling'), 'and the offer again');
+});
+
+test('a feed opened from scratch stops loading at once; if it may show after all, it loads again, once', async () => {
+  const session = new Map();
+  const t = boot('https://www.youtube.com/', {}, undefined, session);
+  assert.equal(t.stops(), 1, 'stopped before the site loads');
+  await settle();
+  assert.equal(t.reason(), 'feed');
+  assert.deepEqual(t.reloads, [], 'still blocked: nothing more to load');
+  await t.setStorage({ unlocks: [{ site: 'youtube', at: t.clock.now }] });
+  assert.deepEqual(t.reloads, ['https://www.youtube.com/'], 'unlocked: the page loads for real');
+  const again = boot('https://www.youtube.com/', { unlocks: [{ site: 'youtube', at: NOON }] }, undefined, session);
+  assert.equal(again.stops(), 0, 'the marked reload is let through');
+  assert.equal(session.size, 0, 'the mark is used once');
+  await settle();
+  assert.equal(again.reason(), null);
+  assert.equal(boot('https://www.youtube.com/@someone', {}, undefined, new Map()).stops(), 0, 'other pages load as usual');
+  assert.equal(boot('https://www.youtube.com/').stops(), 0, 'no stop where no mark could undo it');
 });
 
 test('a switched-off site is left alone; settings from another version are discarded', async () => {

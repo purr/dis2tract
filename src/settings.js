@@ -20,9 +20,11 @@ var UNLOCK = {
   minutes: 3,
   cooldownMinutes: 20, // from the end of one unlock to the start of the next
   perDay: 10,
+  bedtime: [23, 5], // hours: from the first to the second no unlock starts or runs; late scrolling costs sleep
   waitSeconds: 15, // the pause before a challenge
   idleSeconds: 10, // nothing playing and no input this long: an unlock's minutes stop running
   penaltySeconds: 30, // a wrong number waits this long for a new challenge
+  moreScrollSeconds: 10, // past the scroll limit: the wait before another full budget for that page
   // right after an unlock ends: one extra minute to finish a video, paid for with a longer cooldown
   extendMinutes: 1,
   extendGraceMinutes: 2,

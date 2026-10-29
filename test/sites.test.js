@@ -68,6 +68,9 @@ const CASES = [
   ['reddit', 'https://old.reddit.com/r/all/top/', 'feed'],
   ['reddit', 'https://de.reddit.com/', 'feed'],
   ['reddit', 'https://www.reddit.com/r/popular/', 'feed'],
+  ['reddit', 'https://old.reddit.com/r/All/', 'feed'],
+  ['reddit', 'https://old.reddit.com/r/all-pics/', 'feed'],
+  ['reddit', 'https://www.reddit.com/r/allergies/', null],
   ['reddit', 'https://www.reddit.com/r/AskHistorians/comments/1abcde/why_did/', '1abcde'],
   ['reddit', 'https://www.reddit.com/r/AskHistorians/', null],
   ['reddit', 'https://www.reddit.com/user/spez/', null],
@@ -102,6 +105,55 @@ for (const [id, url, want] of CASES) {
     assert.equal(feedOf(id, u) ? 'feed' : SITES[id].itemKey(u), want);
   });
 }
+
+// search results and profiles are free of the scroll budget; feeds, items and the sites' other pages are not
+const FREE = [
+  ['youtube', 'https://www.youtube.com/results?search_query=cats', true],
+  ['youtube', 'https://www.youtube.com/@mkbhd/videos', true],
+  ['youtube', 'https://www.youtube.com/channel/UC123', true],
+  ['youtube', 'https://www.youtube.com/feed/subscriptions', false],
+  ['youtube', 'https://www.youtube.com/watch?v=abc', false],
+  ['x', 'https://x.com/search?q=cats&src=typed_query', true],
+  ['x', 'https://x.com/jack', true],
+  ['x', 'https://x.com/jack/media', true],
+  ['x', 'https://x.com/jack/status/20', false],
+  ['x', 'https://x.com/notifications', false],
+  ['x', 'https://x.com/i/bookmarks', false],
+  ['x', 'https://x.com/home', false],
+  ['tiktok', 'https://www.tiktok.com/search/video?q=cats', true],
+  ['tiktok', 'https://www.tiktok.com/@user', true],
+  ['tiktok', 'https://www.tiktok.com/@user/video/7123456789', false],
+  ['tiktok', 'https://www.tiktok.com/foryou', false],
+  ['instagram', 'https://www.instagram.com/explore/search/keyword/?q=cats', true],
+  ['instagram', 'https://www.instagram.com/natgeo/', true],
+  ['instagram', 'https://www.instagram.com/natgeo/reels/', true],
+  ['instagram', 'https://www.instagram.com/natgeo/p/C0deAbc/', false],
+  ['instagram', 'https://www.instagram.com/direct/inbox/', false],
+  ['instagram', 'https://www.instagram.com/reels/', false],
+  ['instagram', 'https://www.instagram.com/explore/', false],
+  ['reddit', 'https://www.reddit.com/search/?q=cats', true],
+  ['reddit', 'https://www.reddit.com/r/aww/search/?q=cats', true],
+  ['reddit', 'https://www.reddit.com/user/spez/submitted/', true],
+  ['reddit', 'https://www.reddit.com/r/aww/', false],
+  ['facebook', 'https://www.facebook.com/search/top/?q=cats', true],
+  ['facebook', 'https://www.facebook.com/zuck', true],
+  ['facebook', 'https://www.facebook.com/profile.php?id=4', true],
+  ['facebook', 'https://www.facebook.com/marketplace', false],
+  ['facebook', 'https://www.facebook.com/groups/feed/', false],
+  ['threads', 'https://www.threads.com/search?q=cats', true],
+  ['threads', 'https://www.threads.com/@zuck', true],
+  ['threads', 'https://www.threads.com/@zuck/post/C0deAbc', false],
+  ['bluesky', 'https://bsky.app/search?q=cats', true],
+  ['bluesky', 'https://bsky.app/profile/jay.bsky.team', true],
+  ['bluesky', 'https://bsky.app/profile/jay.bsky.team/post/3abc', false],
+  ['linkedin', 'https://www.linkedin.com/search/results/all/?keywords=cats', true],
+  ['linkedin', 'https://www.linkedin.com/in/someone/', true],
+  ['linkedin', 'https://www.linkedin.com/jobs/', false],
+];
+
+test('free pages: search results and profiles', () => {
+  for (const [id, url, want] of FREE) assert.equal(SITES[id].free(new URL(url)), want, url);
+});
 
 test('a feed switched off in toggles is no longer a feed; the others still are', () => {
   const toggles = { 'tiktok.live': false };

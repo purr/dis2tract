@@ -1,6 +1,7 @@
 // per-site rules, from urls only: a redesign rarely changes them, unlike dom selectors.
 // feeds: [key, label, match(url)]: the endless algorithmic feeds, each blocked unless switched off in settings.
 // itemKey: id of the single video/post on this url, or null. distinct ids in a row form a swipe chain.
+// free: search results and profiles, pages opened on purpose: no scroll budget there.
 // me: a url that opens the logged-in user's own profile; sites without one get a handle field in settings.
 // route: turns special search-box input into a path (reddit's r/name).
 // tweaks: optional extras with a label and a default; run(url) returns true once done for that page.
@@ -29,6 +30,7 @@ var SITES = {
     },
     search: (q) => `/results?search_query=${encodeURIComponent(q)}`,
     profile: (name) => `/@${encodeURIComponent(name)}`,
+    free: (u) => /^\/(results|hashtag\/[^/]+|@[^/]+|(channel|c|user)\/[^/]+)(\/|$)/.test(path(u)),
     me: '/profile', // login-gated redirect to your own channel
     links: [['subscriptions', '/feed/subscriptions'], ['history', '/feed/history'], ['playlists', '/feed/playlists']],
     tweaks: { theater: { label: 'theater mode on every video', on: true, run: theater } },
@@ -43,6 +45,9 @@ var SITES = {
     itemKey: (u) => capture(u, /\/status\/(\d+)/),
     search: (q) => `/search?q=${encodeURIComponent(q)}&src=typed_query`,
     profile: (name) => `/${encodeURIComponent(name)}`,
+    // a profile is a bare handle (and its tabs), so the site's own first-level pages are ruled out by name
+    free: (u) => /^\/(search|hashtag\/[^/]+)$/.test(path(u))
+      || /^\/(?!(home|explore|notifications|messages|settings|compose|i)(\/|$))\w{1,15}(\/(media|likes|with_replies|highlights|articles))?$/.test(path(u)),
     links: [['notifications', '/notifications'], ['messages', '/messages'], ['bookmarks', '/i/bookmarks']],
   },
   tiktok: {
@@ -60,6 +65,7 @@ var SITES = {
     itemKey: (u) => capture(u, /^\/@[^/]+\/(?:video|photo)\/(\d+)/),
     search: (q) => `/search?q=${encodeURIComponent(q)}`,
     profile: (name) => `/@${encodeURIComponent(name)}`,
+    free: (u) => /^\/(search(\/\w+)?|tag\/[^/]+|@[^/]+)$/.test(path(u)),
     links: [['messages', '/messages']],
   },
   instagram: {
@@ -74,6 +80,9 @@ var SITES = {
     itemKey: (u) => capture(u, /\/(?:p|reels?|tv)\/([\w-]+)/) || capture(u, /^\/stories\/(?:highlights\/)?([^/]+)/),
     search: (q) => `/explore/search/keyword/?q=${encodeURIComponent(q)}`,
     profile: (name) => `/${encodeURIComponent(name)}/`,
+    // a profile is a bare username (and its tabs), so the site's own first-level pages are ruled out by name
+    free: (u) => /^\/explore\/(search\/keyword|tags\/[^/]+)$/.test(path(u))
+      || /^\/(?!(explore|reels?|direct|accounts|stories|p|tv|notifications)(\/|$))[\w.]+(\/(reels|tagged))?$/.test(path(u)),
     links: [['messages', '/direct/inbox/'], ['notifications', '/notifications/']],
   },
   reddit: {
@@ -83,11 +92,13 @@ var SITES = {
     hostMatch: /^(?:www|old|[a-z]{2})\.reddit\.com$/,
     feeds: [
       ['home', 'home', (u) => ['/', '/best', '/hot', '/new', '/top', '/rising', '/controversial'].includes(path(u))],
-      ['popular', 'popular and all', (u) => /^\/r\/(popular|all)(\/|$)/.test(path(u))],
+      // any case, and old reddit's /r/all-pics (all minus a subreddit) is still all
+      ['popular', 'popular and all', (u) => /^\/r\/(popular|all)([-+/]|$)/i.test(path(u))],
     ],
     itemKey: (u) => capture(u, /\/comments\/(\w+)/) || capture(u, /^\/gallery\/(\w+)/),
     search: (q) => `/search/?q=${encodeURIComponent(q)}`,
     profile: (name) => `/user/${encodeURIComponent(name)}/`,
+    free: (u) => /^\/((r\/[^/]+\/)?search|u(ser)?\/[^/]+(\/(overview|submitted|comments))?)$/.test(path(u)),
     route: (v) => (/^\/?r\/\w+\/?$/.test(v) ? `/${v.replace(/^\/|\/$/g, '')}/` : null),
     me: '/user/me/', // redirects to your own profile when logged in
     links: [['messages', '/message/inbox/']],
@@ -106,6 +117,9 @@ var SITES = {
       || u.searchParams.get('story_fbid') || u.searchParams.get('set') || u.searchParams.get('fbid'),
     search: (q) => `/search/top/?q=${encodeURIComponent(q)}`,
     profile: (name) => `/${encodeURIComponent(name)}`,
+    // a profile is a bare name or profile.php, so the site's own first-level pages are ruled out by name
+    free: (u) => /^\/(search\/\w+|profile\.php)$/.test(path(u))
+      || /^\/(?!(home\.php|watch|reels?|groups|messages|notifications|marketplace|events|friends|gaming|stories|photo|photo\.php|permalink\.php|me|settings|bookmarks|saved)$)[\w.]+$/.test(path(u)),
     me: '/me', // redirects to your own profile when logged in
     links: [['messages', '/messages/'], ['notifications', '/notifications/']],
   },
@@ -120,6 +134,7 @@ var SITES = {
     itemKey: (u) => capture(u, /^\/@[^/]+\/post\/([\w-]+)/),
     search: (q) => `/search?q=${encodeURIComponent(q)}`,
     profile: (name) => `/@${encodeURIComponent(name)}`,
+    free: (u) => /^\/(search|@[^/]+(\/(replies|reposts|media))?)$/.test(path(u)),
     links: [['activity', '/activity']],
   },
   bluesky: {
@@ -133,6 +148,7 @@ var SITES = {
     search: (q) => `/search?q=${encodeURIComponent(q)}`,
     // a bare name is a bsky.social handle; bluesky only resolves full handles
     profile: (name) => `/profile/${encodeURIComponent(name.includes('.') ? name : `${name}.bsky.social`)}`,
+    free: (u) => /^\/(search|profile\/[^/]+)$/.test(path(u)),
     links: [['notifications', '/notifications'], ['messages', '/messages']],
   },
   linkedin: {
@@ -142,6 +158,7 @@ var SITES = {
     itemKey: (u) => capture(u, /^\/posts\/([^/]+)/) || capture(u, /^\/feed\/update\/([^/]+)/),
     search: (q) => `/search/results/all/?keywords=${encodeURIComponent(q)}`,
     profile: (name) => `/in/${encodeURIComponent(name)}/`,
+    free: (u) => /^\/(search\/results\/[\w-]+|in\/[^/]+(\/recent-activity\/[\w-]+)?)$/.test(path(u)),
     me: '/in/me/', // redirects to your own profile when logged in
     links: [['messages', '/messaging/'], ['notifications', '/notifications/'], ['jobs', '/jobs/']],
   },

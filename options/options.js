@@ -36,7 +36,8 @@ for (const [id, site] of Object.entries(SITES)) {
 for (const [name, [min, max]] of Object.entries(LIMITS)) Object.assign(form.elements[name], { min, max });
 document.getElementById('limits-note').textContent =
   `0 turns a limit off. an unlock gives ${UNLOCK.minutes} min of feed, counted only while you watch or scroll; the next waits ` +
-  `${UNLOCK.cooldownMinutes} min after they run out; ${UNLOCK.perDay} a day, across all sites. anything that loosens a ` +
+  `${UNLOCK.cooldownMinutes} min after they run out; ${UNLOCK.perDay} a day, across all sites; none from ` +
+  `${UNLOCK.bedtime[0]}:00 to ${UNLOCK.bedtime[1]}:00. anything that loosens a ` +
   `setting applies ${LOOSEN_DELAY_MINUTES} min after you change it.`;
 
 function applyTheme(theme = {}) {
