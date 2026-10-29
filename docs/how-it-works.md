@@ -55,6 +55,12 @@ every block screen asks one question, picked at random, and answers it with one 
 | avoiding something again? classic. | work on it until this timer ends |
 | this is how you spend tonight? | three monkeytype tests, beat your best |
 
+once today holds more than 30 minutes on these sites (the daily cap that eased loneliness and depression in [a 2018 study](https://guilfordjournals.com/doi/10.1521/jscp.2018.37.10.751)), the question is that time, answered with one random thing it was enough for:
+
+> 1 h 12 min on social media today. enough to run 12 km, ~780 kcal
+
+the others: a walk, a bike ride or a swim with their calories, workouts, pages of a novel, language lessons, meditations, calls with friends, a letter, real dinners, a clean home, yoga, sleep. calories are for a 70 kg adult. time counts on any page of these sites while a video plays or you scrolled, tapped or typed in the last 10 seconds, never while the block screen is up, and starts from zero at midnight.
+
 from 23:00 to 5:00 there is only one: *still up, scrolling? phone away, lights off. now.*
 
 ## unlocking

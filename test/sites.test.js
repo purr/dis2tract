@@ -6,9 +6,10 @@ const vm = require('node:vm');
 
 const ctx = vm.createContext({});
 for (const f of ['settings.js', 'sites.js', 'challenges.js', 'suggestions.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../src', f), 'utf8'), ctx);
-const { SITES, feedOf, looser, tighterPart, mergeSettings, siteFor, conversation, CHALLENGES, LIMITS, NEEDS, LATE, SHAME, URGES, URGE_LATE } = ctx;
-// every question with its things to do: the block screen's and the porn page's
-const ANSWERS = [...NEEDS, LATE, ...URGES, URGE_LATE];
+const { SITES, feedOf, looser, tighterPart, mergeSettings, siteFor, conversation, CHALLENGES, LIMITS, NEEDS, LATE, SHAME, URGES, URGE_LATE, instead } = ctx;
+// every question with its things to do: the block screen's (the time on social media for every length a day can
+// hold too) and the porn page's
+const ANSWERS = [...NEEDS, LATE, ...Array.from({ length: 24 * 60 - 30 }, (_, i) => instead(30 + i)), ...URGES, URGE_LATE];
 
 test('every roast question, suggestion and porn page quote fits one line on a phone', () => {
   const lines = [...ANSWERS.flatMap(([question, ideas]) => [question, ...ideas.map(([text]) => text)]), ...SHAME.flat()];

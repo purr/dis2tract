@@ -49,7 +49,23 @@ browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPag
 // extension pages may sound without a click (media.autoplay.allow-extension-background-pages, on by default)
 browser.runtime.onMessage.addListener((message) => {
   if (message === 'chime') new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
+  else if (message?.used) addUsage(message.used);
 });
+// time on the social sites per day, which each tab reports every few seconds (track() in content.js). one writer,
+// so two tabs never overwrite each other's time; and never more than the clock moved since the last report, so two
+// windows in use side by side count once
+let usageAt = 0;
+let usageQueue = Promise.resolve();
+function addUsage(ms) {
+  const now = Date.now();
+  const add = Math.min(ms, Math.max(0, now - usageAt)); // max: a clock set back must not subtract
+  usageAt = now;
+  usageQueue = usageQueue.then(async () => {
+    const { usage } = await browser.storage.local.get('usage');
+    const before = usage && new Date(usage.at).toDateString() === new Date(now).toDateString() ? usage.ms : 0;
+    await browser.storage.local.set({ usage: { at: now, ms: before + add } });
+  }).catch((e) => console.error('dis2tract: time on social media not saved', e));
+}
 // porn sites: no feed rules, no unlock. the tab leaves for the extension's own page before the site loads.
 // the list is oisd's nsfw small (the porn sites among the top million domains, maintained, few false hits),
 // downloaded here, not kept in the repo: it stays current, and no hand-picked list of sites is published.

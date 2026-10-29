@@ -61,6 +61,40 @@ var NEEDS = [
 // after 23:00 the question is always this one
 var LATE = ['still up, scrolling?', [['phone away, lights off. now.']]];
 
+// once today holds a lot of social media, the question is that time, answered with what it was enough for.
+// a lot: over 30 minutes, the daily cap that eased loneliness and depression in hunt et al. 2018 (j soc clin
+// psychol 37:751). calories for a 70 kg adult, met × kg × hours, with mets from the 2024 adult compendium of
+// physical activities (its code after each line). a novel page takes about a minute (adults read fiction at 260
+// words a minute, brysbaert 2019)
+const LOTS_MINUTES = 30;
+const num = (x) => (x < 10 ? Math.round(x * 10) / 10 : Math.round(x)).toLocaleString();
+const kcal = (met, minutes) => (Math.round((met * 70 * minutes) / 600) * 10).toLocaleString();
+// [fewest minutes the line fits, the line for m minutes]
+const INSTEAD = [
+  [30, (m) => `enough to run ${num(m / 6)} km, ~${kcal(9.3, m)} kcal`], // 10 km/h, 12050
+  [30, (m) => `enough to walk ${num(m / 12)} km, ~${kcal(3.8, m)} kcal`], // 5 km/h, 17190
+  [30, (m) => `enough to bike ${num(m / 3)} km, ~${kcal(8, m)} kcal`], // 20 km/h, 01030
+  [30, (m) => `enough to swim ${num(m / 30)} km, ~${kcal(5.8, m)} kcal`], // 2 km/h, 18292
+  // an hour each, gym and weights in one visit, 02061
+  [60, (m) => (m < 120 ? `enough for a full workout, ~${kcal(5, 60)} kcal` : `enough for ${Math.floor(m / 60)} workouts, ~${kcal(5, Math.floor(m / 60) * 60)} kcal`)],
+  [30, (m) => `enough to read ${m.toLocaleString()} pages of a novel`],
+  [30, (m) => `enough for ${Math.floor(m / 5)} short language lessons`],
+  [30, (m) => `enough for ${Math.floor(m / 10)} ten-minute meditations`],
+  [30, (m) => (m < 60 ? 'enough for a long call with a friend' : `enough for ${Math.floor(m / 30)} long calls with friends`)],
+  [30, () => 'enough to write someone a real letter'],
+  [45, (m) => (m < 90 ? 'enough to cook a real dinner' : `enough to cook ${Math.floor(m / 45)} real dinners`)],
+  [60, () => 'enough to clean your whole place'],
+  [60, (m) => (m < 120 ? 'enough for a whole yoga class' : `enough for ${Math.floor(m / 60)} yoga classes`)],
+  [90, (m) => (m < 180 ? 'enough for a whole extra sleep cycle' : `enough for ${Math.floor(m / 90)} full sleep cycles`)],
+  [480, (m) => (m < 960 ? 'enough for a full night of sleep' : `enough for ${Math.floor(m / 480)} full nights of sleep`)],
+];
+// the block screen's question for m minutes of social media today, or null while that is not a lot yet
+function instead(m) {
+  if (m < LOTS_MINUTES) return null;
+  const time = m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`;
+  return [`${time} on social media today.`, INSTEAD.filter(([from]) => m >= from).map(([, line]) => [line(m)])];
+}
+
 // the porn page (porn/porn.js): one of these under the title. they mock the giving in, and each says something
 // true about what it costs, so the sting carries a reason to stop
 var SHAME = [

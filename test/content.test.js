@@ -132,6 +132,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
   };
   const timers = [];
   const chimes = []; // every chime asked of the background page
+  const used = []; // time on social media reported to the background page
   const store = {
     async get(keys) {
       return Object.fromEntries([keys].flat().filter((k) => k in data).map((k) => [k, structuredClone(data[k])]));
@@ -171,6 +172,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
       runtime: {
         sendMessage: async (message) => {
           if (message === 'chime') chimes.push(clock.now);
+          else if (message?.used) used.push(message.used);
         },
         onMessage: { addListener: (f) => messageListeners.push(f) },
       },
@@ -187,6 +189,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
     doc,
     clock,
     chimes,
+    used,
     assigned,
     reloads,
     stops: () => stops,
@@ -766,6 +769,36 @@ test('each block screen roasts with one random question, already answered', asyn
   assert.match(other.find((n) => n.getAttribute('class') === 'd2t-answer').textContent, /^this is how you spend tonight\?/);
 });
 
+test('after half an hour of social media today, the roast is that time and one thing it was enough for', async () => {
+  const roast = (t) => t.find((n) => n.getAttribute('class') === 'd2t-answer').textContent;
+  const t = boot('https://x.com/home', { usage: { at: NOON - MIN, ms: 72 * MIN } });
+  await settle();
+  assert.equal(roast(t), '1 h 12 min on social media today.enough to run 12 km, ~780 kcal');
+  for (const usage of [{ at: NOON - MIN, ms: 29 * MIN }, { at: NOON - 24 * 60 * MIN, ms: 72 * MIN }]) {
+    const calm = boot('https://x.com/home', { usage });
+    await settle();
+    assert.match(roast(calm), /^bored again\? wow\./, 'not a lot yet, or not today');
+  }
+});
+
+test('time on social media counts any page in use, never the block screen', async () => {
+  const t = boot('https://x.com/jack/status/1');
+  await settle();
+  t.touch();
+  await t.run(6000);
+  assert.deepEqual(t.used, [5200], 'sent every few seconds');
+  t.nav('https://x.com/home');
+  assert.deepEqual(t.used, [5200, 400], 'the rest as the block screen comes up');
+  t.touch();
+  await t.run(6000);
+  assert.deepEqual(t.used, [5200, 400], 'nothing while it is up');
+  t.nav('https://x.com/search?q=cats');
+  t.touch();
+  await t.run(2000);
+  for (const f of t.win.listeners.pagehide) f({});
+  assert.deepEqual(t.used, [5200, 400, 2000], 'and the rest on leaving');
+});
+
 test('the page cannot pull focus out of the answer field while blocked', async () => {
   const t = boot('https://www.tiktok.com/foryou');
   await settle();
@@ -1014,8 +1047,9 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     fetched.push(url);
     return { ok: true, text: async () => download };
   };
+  const clock = { now: NOON };
   const background = (withTheme) => {
-    const ctx = vm.createContext({ browser: fakeBrowser(withTheme), CSS, console, Audio, URL, TextDecoder, fetch, setInterval: () => 0 });
+    const ctx = vm.createContext({ browser: fakeBrowser(withTheme), CSS, console, Audio, URL, TextDecoder, fetch, setInterval: () => 0, Date: class extends Date { static now() { return clock.now; } } });
     vm.runInContext(read('background.js'), ctx, { filename: 'background.js' });
     return ctx;
   };
@@ -1079,6 +1113,17 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
   assert.ok(fs.statSync(path.join(__dirname, '..', played[0])).size > 0, played[0]);
   assert.ok(!pkg.webExt.ignoreFiles.some((f) => played[0] === f || played[0].startsWith(`${f}/`)), 'not left out of the package');
+  // time on social media: one writer for every tab, never more than the clock moved, each day from zero
+  on.message({ used: 5000 });
+  clock.now += 5000;
+  on.message({ used: 5000 });
+  on.message({ used: 5000 }); // a second window in use at the same moments
+  await settle();
+  assert.equal(saved.usage.ms, 10_000);
+  clock.now += 24 * 60 * MIN;
+  on.message({ used: 3000 });
+  await settle();
+  assert.equal(saved.usage.ms, 3000, 'a new day starts from zero');
   const page = { '--d2t-bg': 'rgb(10 20 30)', '--d2t-fg': '#fff' };
   assert.deepEqual(
     JSON.parse(JSON.stringify(saved.theme)),

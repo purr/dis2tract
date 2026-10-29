@@ -20,7 +20,7 @@ which files stay out of the package is set once, in `webExt.ignoreFiles` in `pac
 | `src/settings.js` | defaults, limits and the unlock rules |
 | `src/challenges.js` | the unlock challenges |
 | `src/suggestions.js` | the roast questions and their tasks |
-| `src/background.js` | theme colors, toolbar button, uninstall page |
+| `src/background.js` | theme colors, toolbar button, uninstall page, the day's time on social media |
 | `css/overlay.css` | block screen and unlock sheet |
 | `options/` | the settings page |
 

@@ -25,6 +25,7 @@ most blockers shut the whole site. then you need one video, one profile or one m
 - **everything else stays**: search, profiles and messages have no limit. single posts and other pages work until the 5th post in a row or 12 screens of scrolling.
 - **porn is gone for good**: porn sites never load, and porn on x, reddit and bluesky is caught by the sites' own adult labels. a roast shows instead. no unlock.
 - **one question, one task**: every block screen asks why you're here and gives one thing to do instead, linked straight to it.
+- **the time adds up**: time on these sites counts per day, only while you use a page and never on the block screen. past 30 minutes, the block screen says how much, and one thing it was enough for: a 12 km run and its calories, 72 pages of a novel, a real dinner.
 - **unlocking is slow on purpose**: a 15-second pause, then a challenge with no pasting. 3 minutes of feed per unlock, counted only while you watch or scroll. 20 minutes apart, 10 a day, none from 23:00 to 5:00.
 - **nothing about you leaves the browser**: no servers, no analytics. the one download is the porn list, once a day.
 

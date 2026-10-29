@@ -26,6 +26,9 @@
   let spent = { at: 0, ms: 0 };
   let spentAt = 0; // the last tick that spent feed time, 0 while not spending
   let unsaved = 0; // feed time spent in this tab, not yet in storage
+  let usage = { at: 0, ms: 0 }; // time on social media on the day of `at`, every site and tab (background.js keeps it)
+  let used = 0; // time on this site not yet sent to background.js
+  let usedAt = 0; // the last tick that counted it, 0 while not counting
   let lastInput = 0; // the last pointer, wheel, touch or key input on the page
   let banUntil = 0; // after a wrong answer, no new challenge before this, in any tab
   let pendingAt = 0; // when a waiting loosening change is due
@@ -137,11 +140,13 @@
     const handle = settings.handles[siteId];
     const me = site.me ?? (handle && site.profile(handle));
     const links = h('nav', { 'aria-label': 'go to' }, ...[me && ['my profile', me], ...site.links].filter(Boolean).map(([label, path]) => h('a', { href: path }, label)));
-    // one random roast per screen, already answered with one thing to do right now
+    // one random roast per screen, already answered with one thing to do right now; after a lot of social media
+    // today, that time and one thing it was enough for
+    const minutes = Math.floor((today(usage.at) ? usage.ms : 0) / 60_000);
     return h('div', { class: 'd2t-card' },
       h('h2', { id: 'dis2tract-title' }, title),
       sub(sentences),
-      go, links, answer(lateNight() ? LATE : pick(NEEDS)));
+      go, links, answer(lateNight() ? LATE : instead(minutes) ?? pick(NEEDS)));
   }
 
   // past the scroll limit on a page opened on purpose (a long thread, a subreddit; search results and profiles have
@@ -312,14 +317,15 @@
   // a player running now: one in the page, or one the page started through play() that sits in no document or
   // in a shadow root
   const playingNow = () => [...document.querySelectorAll('video, audio'), ...playing].some((m) => !m.paused && !m.ended);
+  // on screen and in use: something plays or the user did something lately. playing alone would make a text feed
+  // free, and a tab left open is not time spent
+  const inUse = () => document.visibilityState === 'visible' && (playingNow() || Date.now() - lastInput <= UNLOCK.idleSeconds * 1000);
 
-  // an unlock's minutes are feed minutes: they run only while a page the unlock lets through is on screen and
-  // in use, so time left when the user goes elsewhere or pauses the video is still there later. in use means
-  // something plays or the user did something lately: playing alone would make a text feed free. saved every
-  // few seconds and on leaving, not on every tick
+  // an unlock's minutes are feed minutes: they run only while a page the unlock lets through is in use, so time
+  // left when the user goes elsewhere or pauses the video is still there later. saved every few seconds and on
+  // leaving, not on every tick
   function spend() {
-    const idle = !playingNow() && Date.now() - lastInput > UNLOCK.idleSeconds * 1000;
-    if (document.visibilityState !== 'visible' || idle) return stopSpending();
+    if (!inUse()) return stopSpending();
     const now = Date.now();
     // a tick more than a second late is a sleeping machine, not time on the feed
     if (spentAt) unsaved += Math.min(now - spentAt, 1000);
@@ -347,6 +353,27 @@
       spent: { at: last.at, ms: used },
       ...(done && { unlocks: [...list.slice(0, -1), { ...last, doneAt: Date.now() }] }),
     });
+  }
+
+  // time on social media today: any page of these sites while in use, never the block screen. background.js keeps
+  // the day's total for every tab; this one sends what it counted every few seconds and on leaving
+  function track() {
+    if (overlay || !inUse()) return stopTracking();
+    const now = Date.now();
+    if (usedAt) used += Math.min(now - usedAt, 1000); // a tick more than a second late is a sleeping machine
+    usedAt = now;
+    if (used >= 5000) report();
+  }
+
+  function stopTracking() {
+    usedAt = 0;
+    report();
+  }
+
+  function report() {
+    if (!used) return;
+    browser.runtime.sendMessage({ used });
+    used = 0;
   }
 
   // a wrong answer: what was wrong, a wait, then a new challenge, all in the same sheet. the wait is stored, so a
@@ -476,6 +503,7 @@
       if (reason) show(reason);
       else hide();
     }
+    track();
     if (overlay && ++pauseTicks % 3 === 0) pauseAll(); // players that load later, every ~1.2 s while blocked
     if (!overlay) for (const m of playing) if (m.paused) playing.delete(m); // remember only what still plays
   }
@@ -545,7 +573,10 @@
   });
   // another tab, another app or a locked screen pauses the unlock's minutes; closing the tab saves them
   document.addEventListener('visibilitychange', () => evaluate());
-  window.addEventListener('pagehide', stopSpending);
+  window.addEventListener('pagehide', () => {
+    stopSpending();
+    stopTracking();
+  });
   for (const type of ['pointerdown', 'wheel', 'touchmove', 'keydown']) {
     window.addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
   }
@@ -596,6 +627,7 @@
     if (area !== 'local') return;
     if (changes.recent) recent = changes.recent.newValue ?? [];
     if (changes.spent) spent = changes.spent.newValue ?? { at: 0, ms: 0 };
+    if (changes.usage) usage = changes.usage.newValue ?? { at: 0, ms: 0 };
     // the wait after a wrong answer only lengthens the next pause. no redraw: that removed the open sheet, so a
     // wrong answer used to drop the user back on the block screen without a word
     if (changes.unlockBan) banUntil = changes.unlockBan.newValue ?? 0;
@@ -664,7 +696,7 @@
     window.stop();
     stopped = true;
   }
-  Promise.all([loadSettings(), browser.storage.local.get(['unlocks', 'spent', 'theme', 'unlockBan', 'pending', 'recent', TRAIL])]).then(([s, stored]) => {
+  Promise.all([loadSettings(), browser.storage.local.get(['unlocks', 'spent', 'usage', 'theme', 'unlockBan', 'pending', 'recent', TRAIL])]).then(([s, stored]) => {
     settings = s;
     // a reload or a new tab within a minute continues the run of items, and the feed this item was carried from
     const trail = stored[TRAIL];
@@ -679,6 +711,7 @@
     // older versions stored an object here; anything but a list means no unlocks
     unlocks = Array.isArray(stored.unlocks) ? stored.unlocks : [];
     spent = stored.spent ?? spent;
+    usage = stored.usage ?? usage;
     theme = stored.theme ?? {};
     banUntil = stored.unlockBan ?? 0;
     pendingAt = stored.pending?.at ?? 0;
