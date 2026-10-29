@@ -4,10 +4,17 @@
 
 | you open | you get |
 | --- | --- |
-| a feed | the block screen: search, `@name` for a profile, links to your profile, messages and notifications, and one question with something better to do |
-| search, a profile, any other page | allowed, until you scroll 12 screens deep |
+| a feed | the block screen: search, `@name` for a profile, links to your profile, messages and notifications, and one question with something better to do. opened from scratch, the site stops loading at once, so none of it runs behind the block |
+| search results, a profile, messages | allowed, with no scroll limit: you opened them on purpose |
+| any other page | allowed, until you scroll 12 screens deep. then "keep scrolling" gives that page 12 more screens after a 10-second wait, as often as you like |
 | a single video or post | allowed. 4 different ones in a row are fine, the 5th is blocked. back steps out again; a profile or a search starts a new count |
-| messages | the scroll limit never applies to conversations |
+| a porn site | never loads: a page roasts you instead, with a meme clip. no unlock, no switch |
+
+## porn sites
+
+blocked for good: the tab goes to the roast page before the site shows. that includes a page that embeds a listed site (a porn player inside a reddit post) and a link that redirects to one (a short link, a mirror domain). which sites count comes from [oisd's nsfw small list](https://oisd.nl): the porn sites among the top million domains, each with its subdomains, maintained so it doesn't catch normal sites. dis2tract downloads it once a day from github and keeps the last copy for offline starts; the adult top-level domains (.xxx, .porn, .sex, .adult) are blocked even before the first download. a site the list doesn't know isn't blocked.
+
+x, reddit and bluesky allow porn among everything else, so their porn is caught by what they say about it themselves. x marks adult pictures and videos as adult content (apart from violence), reddit tags posts nsfw, bluesky labels posts and accounts porn, sexual or nudity. dis2tract reads those marks in what the page loads, and a page that loaded any goes to the roast page: a search, a profile or a single post. there's no word list, so slang and other languages are caught too. firefox only runs dis2tract in private windows if you allow it ([install guide](install.md)).
 
 ## blocked feeds
 
@@ -65,7 +72,7 @@ sometimes you do want the feed. you can unlock it, but slowly, on purpose:
    - work out something like `37 × 6 + 52` in your head
    - count one letter in a line of words
 
-   pasting and dropping text are refused, and so are keyboard clipboard chips and dictation: more than 2 words arriving at once are undone.
+   only typing counts, one character at a time. pastes, drops, keyboard clipboard chips, dictation and swipe typing are undone, and text that another extension slips in (one that re-enables right click and paste) is thrown away on enter.
 3. **a wrong enter costs 30 seconds**: the sheet says it was wrong (math and counting show the right number), waits, then brings a new challenge. closing and reopening the sheet doesn't skip the wait. a typing challenge opens by itself the moment the text is right, so enter on a typo counts as wrong.
 
 | rule | value |
@@ -73,6 +80,7 @@ sometimes you do want the feed. you can unlock it, but slowly, on purpose:
 | one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen and in use: a video plays, or you scrolled, tapped or typed in the last 10 s. pause the video or leave with time left and it waits for you until the next unlock could start (23 min after unlocking), or until you take an unlock elsewhere |
 | between unlocks | 20 min after the time runs out (or would have, used in one go), across all sites |
 | per day | 10, across all sites |
+| bedtime | from 23:00 to 5:00 no unlock starts, and one still running ends at 23:00 |
 | one more minute | offered once, for 2 min after the time runs out. the next unlock then waits 30 min |
 
 these rules have no setting on purpose: a setting would be the way around them. they live in `UNLOCK` in `src/settings.js`.
@@ -94,10 +102,10 @@ open them with the dis2tract toolbar button, or about:addons → dis2tract → p
 ## also
 
 - **a chime**: a block that appears while you browse fades in with the 6 am bell from five nights at freddy's, in the tab you're looking at. settings → block screen switches it off.
-- **your theme's colors**: the block screen and settings follow your firefox theme, live, from the first frame. desktop only: firefox for android has no themes.
+- **your theme's colors**: the block screen, the porn page and settings follow your firefox theme, live, from the first frame. desktop only: firefox for android has no themes.
 - **theater mode**: youtube opens every video in theater mode, which moves the recommendations below the video. switchable per site.
 - **uninstall**: removing dis2tract opens npr's piece on the inventor of infinite scroll, who now wants to kill it. nothing about you is sent along.
-- **privacy**: no servers, no analytics, no requests of its own. everything stays in `browser.storage.local`.
+- **privacy**: no servers, no analytics. its one request is the porn list, once a day, from github; nothing about you goes with it. everything else stays in `browser.storage.local`.
 
 ## known limits
 

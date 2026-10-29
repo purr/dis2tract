@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "dis2tract",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "blocks endless feeds on youtube, x, tiktok, instagram, reddit, facebook, threads, bluesky and linkedin. search, profiles and single posts keep working.",
   "browser_specific_settings": {
     "gecko": {

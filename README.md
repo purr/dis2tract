@@ -22,10 +22,11 @@ most blockers shut the whole site. then you need one video, one profile or one m
 ## what it does
 
 - **feeds are gone**: home, for you, explore, shorts and reels tabs show a block screen with search, `@name` for a profile, and links to your profile and messages.
-- **everything else stays**: search, profiles, messages and single posts work, until you scroll 12 screens deep or open the 5th post in a row.
+- **everything else stays**: search, profiles and messages have no limit. single posts and other pages work until the 5th post in a row or 12 screens of scrolling.
+- **porn is gone for good**: porn sites never load, and porn on x, reddit and bluesky is caught by the sites' own adult labels. a roast shows instead. no unlock.
 - **one question, one task**: every block screen asks why you're here and gives one thing to do instead, linked straight to it.
-- **unlocking is slow on purpose**: a 15-second pause, then a challenge with no pasting. 3 minutes of feed per unlock, counted only while you watch or scroll. 20 minutes apart, 10 a day.
-- **nothing leaves the browser**: no servers, no analytics.
+- **unlocking is slow on purpose**: a 15-second pause, then a challenge with no pasting. 3 minutes of feed per unlock, counted only while you watch or scroll. 20 minutes apart, 10 a day, none from 23:00 to 5:00.
+- **nothing about you leaves the browser**: no servers, no analytics. the one download is the porn list, once a day.
 
 [how it works in detail →](docs/how-it-works.md)
 
