@@ -32,7 +32,7 @@ every feed can be switched off on its own in settings, for example to allow tikt
 | bluesky | home, custom feeds | search, profiles, posts, notifications, messages |
 | linkedin | home feed | search, profiles, posts, messages, notifications, jobs |
 
-a youtube playlist counts as one video in a row; a mix counts every video, since it autoplays forever.
+a youtube playlist counts as one video in a row; a mix counts every video, since it autoplays forever. x's full-screen video viewer on a phone counts every video you swipe to.
 
 ## no easy way out
 

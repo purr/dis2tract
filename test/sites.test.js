@@ -44,6 +44,8 @@ const CASES = [
   ['x', 'https://x.com/jack/status/20', '20'],
   ['x', 'https://x.com/jack/status/20/photo/1', '20'],
   ['x', 'https://x.com/i/web/status/20', '20'],
+  ['x', 'https://x.com/jack/status/20/mediaviewer?currentTweet=20&currentTweetUser=jack', '20'],
+  ['x', 'https://x.com/jack/status/20/mediaViewer?currentTweet=30&currentTweetUser=bob', '30'],
   ['x', 'https://x.com/jack', null],
   ['x', 'https://x.com/search?q=cats&src=typed_query', null],
   ['tiktok', 'https://www.tiktok.com/', 'feed'],
