@@ -44,7 +44,7 @@ var SITES = {
     ],
     // the phone's video viewer (/status/ID/mediaviewer) keeps the post it opened on in the path; each swipe to the
     // next video only rewrites ?currentTweet= (as the userscript no-x-video-swipe and the xverse app read it, 2026-10)
-    itemKey: (u) => u.searchParams.get('currentTweet') || capture(u, /\/status\/(\d+)/),
+    itemKey: (u) => (/\/status\/\d+\/mediaviewer$/i.test(path(u)) && u.searchParams.get('currentTweet')) || capture(u, /\/status\/(\d+)/),
     search: (q) => `/search?q=${encodeURIComponent(q)}&src=typed_query`,
     profile: (name) => `/${encodeURIComponent(name)}`,
     // a profile is a bare handle (and its tabs), so the site's own first-level pages are ruled out by name
