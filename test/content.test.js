@@ -132,7 +132,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
   };
   const timers = [];
   const chimes = []; // every chime asked of the background page
-  const used = []; // time on social media reported to the background page
+  const uses = []; // when the page told the background page it is in use (time on social media)
   const store = {
     async get(keys) {
       return Object.fromEntries([keys].flat().filter((k) => k in data).map((k) => [k, structuredClone(data[k])]));
@@ -172,7 +172,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
       runtime: {
         sendMessage: async (message) => {
           if (message === 'chime') chimes.push(clock.now);
-          else if (message?.used) used.push(message.used);
+          else if (message === 'use') uses.push(clock.now);
         },
         onMessage: { addListener: (f) => messageListeners.push(f) },
       },
@@ -189,7 +189,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
     doc,
     clock,
     chimes,
-    used,
+    uses,
     assigned,
     reloads,
     stops: () => stops,
@@ -218,9 +218,9 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
       doc.visibilityState = on ? 'visible' : 'hidden';
       for (const f of doc.listeners.visibilitychange) f({});
     },
-    // a video the page starts through its own play(); its pause() stops it
-    play() {
-      const video = { paused: true, ended: false, pause() { this.paused = true; } };
+    // a video the page starts through its own play(), with sound unless told otherwise; its pause() stops it
+    play(props) {
+      const video = { paused: true, ended: false, muted: false, volume: 1, ...props, pause() { this.paused = true; } };
       win.wrappedJSObject.HTMLMediaElement.prototype.play.call(video);
       return video;
     },
@@ -781,22 +781,31 @@ test('after half an hour of social media today, the roast is that time and one t
   }
 });
 
-test('time on social media counts any page in use, never the block screen', async () => {
+test('time on social media: a note on every look while a page is in use, none behind the block screen', async () => {
   const t = boot('https://x.com/jack/status/1');
   await settle();
   t.touch();
-  await t.run(6000);
-  assert.deepEqual(t.used, [5200], 'sent every few seconds');
+  await t.run(2000);
+  assert.deepEqual(t.uses, [400, 800, 1200, 1600, 2000].map((ms) => NOON + ms));
   t.nav('https://x.com/home');
-  assert.deepEqual(t.used, [5200, 400], 'the rest as the block screen comes up');
-  t.touch();
-  await t.run(6000);
-  assert.deepEqual(t.used, [5200, 400], 'nothing while it is up');
-  t.nav('https://x.com/search?q=cats');
   t.touch();
   await t.run(2000);
-  for (const f of t.win.listeners.pagehide) f({});
-  assert.deepEqual(t.used, [5200, 400, 2000], 'and the rest on leaving');
+  assert.equal(t.uses.length, 5, 'none while the block screen is up');
+  t.nav('https://x.com/search?q=cats');
+  await t.run(20_000);
+  assert.equal(t.uses.at(-1), NOON + 2000 + 10_000, 'none from 10 s after the last input');
+});
+
+test('a muted video counts as use for a minute after the last input; one with sound, while it plays', async () => {
+  const t = boot('https://x.com/jack/status/1');
+  await settle();
+  t.touch();
+  const clip = t.play({ muted: true });
+  await t.run(2 * MIN);
+  assert.equal(t.uses.at(-1), NOON + MIN, 'feeds loop muted clips on their own: nobody may be there');
+  clip.muted = false;
+  await t.run(MIN);
+  assert.equal(t.uses.at(-1), NOON + 3 * MIN, 'with sound on, someone is listening');
 });
 
 test('the page cannot pull focus out of the answer field while blocked', async () => {
@@ -1048,8 +1057,12 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     return { ok: true, text: async () => download };
   };
   const clock = { now: NOON };
+  const timeouts = []; // run by hand, when the test lets that time pass
   const background = (withTheme) => {
-    const ctx = vm.createContext({ browser: fakeBrowser(withTheme), CSS, console, Audio, URL, TextDecoder, fetch, setInterval: () => 0, Date: class extends Date { static now() { return clock.now; } } });
+    const ctx = vm.createContext({
+      browser: fakeBrowser(withTheme), CSS, console, Audio, URL, TextDecoder, fetch,
+      setInterval: () => 0, setTimeout: (f) => timeouts.push(f), Date: class extends Date { static now() { return clock.now; } },
+    });
     vm.runInContext(read('background.js'), ctx, { filename: 'background.js' });
     return ctx;
   };
@@ -1113,17 +1126,28 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
   assert.ok(fs.statSync(path.join(__dirname, '..', played[0])).size > 0, played[0]);
   assert.ok(!pkg.webExt.ignoreFiles.some((f) => played[0] === f || played[0].startsWith(`${f}/`)), 'not left out of the package');
-  // time on social media: one writer for every tab, never more than the clock moved, each day from zero
-  on.message({ used: 5000 });
-  clock.now += 5000;
-  on.message({ used: 5000 });
-  on.message({ used: 5000 }); // a second window in use at the same moments
-  await settle();
-  assert.equal(saved.usage.ms, 10_000);
+  // time on social media: the time between notes from any tabs under 2 s apart, one writer, each day from zero
+  const look = (ms) => {
+    clock.now += ms;
+    on.message('use');
+  };
+  const save = async () => {
+    for (const f of timeouts.splice(0)) f();
+    await settle();
+  };
+  look(0);
+  for (let i = 0; i < 25; i++) look(400); // 10 s in use
+  for (let i = 0; i < 50; i++) look(200); // two windows in use, their notes 200 ms apart: 10 s, not 20
+  look(60_000); // a sleeping machine
+  look(-3_600_000); // the clock set back an hour
+  look(400);
+  await save();
+  assert.equal(saved.usage.ms, 20_400);
   clock.now += 24 * 60 * MIN;
-  on.message({ used: 3000 });
-  await settle();
-  assert.equal(saved.usage.ms, 3000, 'a new day starts from zero');
+  look(0);
+  look(1000);
+  await save();
+  assert.equal(saved.usage.ms, 1000, 'a new day starts from zero');
   const page = { '--d2t-bg': 'rgb(10 20 30)', '--d2t-fg': '#fff' };
   assert.deepEqual(
     JSON.parse(JSON.stringify(saved.theme)),

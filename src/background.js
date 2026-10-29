@@ -49,21 +49,31 @@ browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPag
 // extension pages may sound without a click (media.autoplay.allow-extension-background-pages, on by default)
 browser.runtime.onMessage.addListener((message) => {
   if (message === 'chime') new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
-  else if (message?.used) addUsage(message.used);
+  else if (message === 'use') countUse();
 });
-// time on the social sites per day, which each tab reports every few seconds (track() in content.js). one writer,
-// so two tabs never overwrite each other's time; and never more than the clock moved since the last report, so two
-// windows in use side by side count once
-let usageAt = 0;
+// time on the social sites per day. every tab with one of their pages in use and no block screen up says so on
+// each look (track() in content.js), and the time between two notes from any tabs counts when they are under 2 s
+// apart: two windows in use side by side count once, and a sleeping machine or a clock set back adds nothing.
+// one writer, so two tabs never overwrite each other's time; saved within 5 s, not on every note
+let usedAt = 0; // the last note, from any tab
+let unsaved = 0; // counted, not in storage yet
 let usageQueue = Promise.resolve();
-function addUsage(ms) {
+function countUse() {
   const now = Date.now();
-  const add = Math.min(ms, Math.max(0, now - usageAt)); // max: a clock set back must not subtract
-  usageAt = now;
+  const gap = now - usedAt;
+  usedAt = now;
+  if (gap <= 0 || gap >= 2000) return;
+  if (!unsaved) setTimeout(saveUsage, 5000);
+  unsaved += gap;
+}
+function saveUsage() {
+  const ms = unsaved;
+  unsaved = 0;
   usageQueue = usageQueue.then(async () => {
     const { usage } = await browser.storage.local.get('usage');
+    const now = Date.now();
     const before = usage && new Date(usage.at).toDateString() === new Date(now).toDateString() ? usage.ms : 0;
-    await browser.storage.local.set({ usage: { at: now, ms: before + add } });
+    await browser.storage.local.set({ usage: { at: now, ms: before + ms } });
   }).catch((e) => console.error('dis2tract: time on social media not saved', e));
 }
 // porn sites: no feed rules, no unlock. the tab leaves for the extension's own page before the site loads.

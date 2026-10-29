@@ -27,8 +27,6 @@
   let spentAt = 0; // the last tick that spent feed time, 0 while not spending
   let unsaved = 0; // feed time spent in this tab, not yet in storage
   let usage = { at: 0, ms: 0 }; // time on social media on the day of `at`, every site and tab (background.js keeps it)
-  let used = 0; // time on this site not yet sent to background.js
-  let usedAt = 0; // the last tick that counted it, 0 while not counting
   let lastInput = 0; // the last pointer, wheel, touch or key input on the page
   let banUntil = 0; // after a wrong answer, no new challenge before this, in any tab
   let pendingAt = 0; // when a waiting loosening change is due
@@ -315,11 +313,18 @@
   }
 
   // a player running now: one in the page, or one the page started through play() that sits in no document or
-  // in a shadow root
-  const playingNow = () => [...document.querySelectorAll('video, audio'), ...playing].some((m) => !m.paused && !m.ended);
-  // on screen and in use: something plays or the user did something lately. playing alone would make a text feed
-  // free, and a tab left open is not time spent
-  const inUse = () => document.visibilityState === 'visible' && (playingNow() || Date.now() - lastInput <= UNLOCK.idleSeconds * 1000);
+  // in a shadow root. `heard`: only one with its sound on
+  const playingNow = (heard) => [...document.querySelectorAll('video, audio'), ...playing]
+    .some((m) => !m.paused && !m.ended && (!heard || (!m.muted && m.volume > 0)));
+  // on screen and in use: the user did something lately, or something plays. playing alone would make a text feed
+  // free, and a tab left open is not time spent: feeds loop muted clips on their own, and firefox keeps a phone's
+  // screen on while a video with a sound track plays, muted or not (HTMLVideoElement::ShouldCreateVideoWakeLock),
+  // so a muted player counts only within UNLOCK.mutedSeconds of the last input
+  function inUse() {
+    const idle = Date.now() - lastInput;
+    if (document.visibilityState !== 'visible') return false;
+    return idle <= UNLOCK.idleSeconds * 1000 || playingNow(true) || (idle <= UNLOCK.mutedSeconds * 1000 && playingNow());
+  }
 
   // an unlock's minutes are feed minutes: they run only while a page the unlock lets through is in use, so time
   // left when the user goes elsewhere or pauses the video is still there later. saved every few seconds and on
@@ -355,25 +360,10 @@
     });
   }
 
-  // time on social media today: any page of these sites while in use, never the block screen. background.js keeps
-  // the day's total for every tab; this one sends what it counted every few seconds and on leaving
+  // time on social media today: any page of these sites while in use, never the block screen. background.js
+  // counts the day's total for every tab from these notes, one per look
   function track() {
-    if (overlay || !inUse()) return stopTracking();
-    const now = Date.now();
-    if (usedAt) used += Math.min(now - usedAt, 1000); // a tick more than a second late is a sleeping machine
-    usedAt = now;
-    if (used >= 5000) report();
-  }
-
-  function stopTracking() {
-    usedAt = 0;
-    report();
-  }
-
-  function report() {
-    if (!used) return;
-    browser.runtime.sendMessage({ used });
-    used = 0;
+    if (!overlay && inUse()) browser.runtime.sendMessage('use');
   }
 
   // a wrong answer: what was wrong, a wait, then a new challenge, all in the same sheet. the wait is stored, so a
@@ -573,10 +563,7 @@
   });
   // another tab, another app or a locked screen pauses the unlock's minutes; closing the tab saves them
   document.addEventListener('visibilitychange', () => evaluate());
-  window.addEventListener('pagehide', () => {
-    stopSpending();
-    stopTracking();
-  });
+  window.addEventListener('pagehide', stopSpending);
   for (const type of ['pointerdown', 'wheel', 'touchmove', 'keydown']) {
     window.addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
   }

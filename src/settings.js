@@ -22,7 +22,8 @@ var UNLOCK = {
   perDay: 10,
   bedtime: [23, 5], // hours: from the first to the second no unlock starts or runs; late scrolling costs sleep
   waitSeconds: 15, // the pause before a challenge
-  idleSeconds: 10, // nothing playing and no input this long: an unlock's minutes stop running
+  idleSeconds: 10, // no input this long and nothing playing: a page is not in use (unlock minutes, the day's time)
+  mutedSeconds: 60, // a muted player counts as use only this long after the last input: feeds loop muted clips
   penaltySeconds: 30, // a wrong number waits this long for a new challenge
   moreScrollSeconds: 10, // past the scroll limit: the wait before another full budget for that page
   // right after an unlock ends: one extra minute to finish a video, paid for with a longer cooldown

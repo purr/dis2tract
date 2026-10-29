@@ -59,7 +59,7 @@ once today holds more than 30 minutes on these sites (the daily cap that eased l
 
 > 1 h 12 min on social media today. enough to run 12 km, ~780 kcal
 
-the others: a walk, a bike ride or a swim with their calories, workouts, pages of a novel, language lessons, meditations, calls with friends, a letter, real dinners, a clean home, yoga, sleep. calories are for a 70 kg adult. time counts on any page of these sites while a video plays or you scrolled, tapped or typed in the last 10 seconds, never while the block screen is up, and starts from zero at midnight.
+the others: a walk, a bike ride or a swim with their calories, workouts, pages of a novel, language lessons, meditations, calls with friends, a letter, real dinners, a clean home, yoga, sleep. calories are for a 70 kg adult. time counts while a page of these sites is on screen and you scrolled, tapped or typed in the last 10 seconds, or a video plays (a muted one only within a minute of your last input: feeds loop muted clips by themselves). it never counts while the block screen is up or in a background tab, and starts from zero at midnight.
 
 from 23:00 to 5:00 there is only one: *still up, scrolling? phone away, lights off. now.*
 
@@ -83,7 +83,7 @@ sometimes you do want the feed. you can unlock it, but slowly, on purpose:
 
 | rule | value |
 | --- | --- |
-| one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen and in use: a video plays, or you scrolled, tapped or typed in the last 10 s. pause the video or leave with time left and it waits for you until the next unlock could start (23 min after unlocking), or until you take an unlock elsewhere |
+| one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen and in use: you scrolled, tapped or typed in the last 10 s, or a video plays (a muted one only within a minute of that). pause the video or leave with time left and it waits for you until the next unlock could start (23 min after unlocking), or until you take an unlock elsewhere |
 | between unlocks | 20 min after the time runs out (or would have, used in one go), across all sites |
 | per day | 10, across all sites |
 | bedtime | from 23:00 to 5:00 no unlock starts, and one still running ends at 23:00 |
