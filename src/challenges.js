@@ -30,8 +30,8 @@ var CHALLENGES = [
       check: (v) => normalize(v) === [...w].reverse().join(' '), wrong: 'that was not the reverse order.',
     };
   },
-  // sized for a head, not a calculator: two steps that take focus for half a minute. 410 × 78 sent people to
-  // the calculator, which trains reaching for a tool instead of pausing
+  // sized for a head, not a calculator: two steps that take focus for half a minute. a product like 410 × 78
+  // invites the calculator, which trains reaching for a tool instead of pausing
   function arithmetic() {
     const a = randomInt(12, 49);
     const b = randomInt(3, 9);
