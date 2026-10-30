@@ -1003,7 +1003,7 @@ test('the porn page is built from the block screen\'s parts, look and theme', as
 
 test('background: theme pairs become a document_start stylesheet and a storage mirror; bad colors are dropped', async () => {
   let saved = {};
-  let current = { colors: { frame: [10, 20, 30], tab_background_text: '#fff', toolbar_field: 'red', toolbar_field_text: 'red} body {display:none', tab_line: '#0af' } };
+  let current = { colors: { frame: [10, 20, 30], tab_background_text: '#fff', toolbar_field: 'red', toolbar_field_text: 'red} body {display:none', toolbar_field_border_focus: 'var(--x, url(https://collector.example/c.png))', tab_line: '#0af' } };
   const registered = [];
   const on = {};
   const played = [];
@@ -1047,8 +1047,25 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     storage: { local: { get: async () => structuredClone(saved), set: async (o) => { saved = { ...saved, ...o }; } } },
     ...(withTheme && { theme: { getCurrent: async () => current, onUpdated: { addListener: (f) => (on.updated = f) } } }),
   });
-  // stand-in for the browser's css parser: hex, rgb() and plain names count as colors
-  const CSS = { supports: (_, v) => /^(#[\da-f]{3,8}|rgb\([\d\s./]+\)|[a-z]+)$/i.test(v) };
+  // a canvas in the background page, as firefox's behaves: anything that is not a plain color (var() too) leaves
+  // fillStyle as it was, and a color reads back as #rrggbb, or rgba(r, g, b, a) when translucent. knows hex,
+  // rgb() and rgba() with numbers, and red
+  const parseColor = (v) => {
+    const hex = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(v === 'red' ? '#f00' : v)?.[1];
+    if (hex) return [...(hex.length === 3 ? [...hex].map((x) => x + x) : hex.match(/../g)).map((x) => parseInt(x, 16)), 1];
+    const m = /^rgba?\(([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:[ ,/]+([\d.]+))?\)$/.exec(v);
+    return m && [...m.slice(1, 4).map(Number), Number(m[4] ?? 1)];
+  };
+  const context2d = {
+    style: '#000000',
+    get fillStyle() { return this.style; },
+    set fillStyle(v) {
+      const [r, g, b, a] = parseColor(String(v)) ?? [];
+      if (r === undefined) return;
+      this.style = a === 1 ? `#${[r, g, b].map((x) => x.toString(16).padStart(2, '0')).join('')}` : `rgba(${r}, ${g}, ${b}, ${a})`;
+    },
+  };
+  const document = { createElement: () => ({ getContext: () => context2d }) };
   // the porn list download: oisd's format, a comment and one domain per line
   let download = `# oisd nsfw small\n${Array.from({ length: 1000 }, (_, i) => `site${i}.test`).join('\n')}\nexample.test\n`;
   const fetched = [];
@@ -1060,7 +1077,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const timeouts = []; // run by hand, when the test lets that time pass
   const background = (withTheme) => {
     const ctx = vm.createContext({
-      browser: fakeBrowser(withTheme), CSS, console, Audio, URL, TextDecoder, fetch,
+      browser: fakeBrowser(withTheme), document, console, Audio, URL, TextDecoder, fetch,
       setInterval: () => 0, setTimeout: (f) => timeouts.push(f), Date: class extends Date { static now() { return clock.now; } },
     });
     vm.runInContext(read('background.js'), ctx, { filename: 'background.js' });
@@ -1148,24 +1165,36 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   look(1000);
   await save();
   assert.equal(saved.usage.ms, 1000, 'a new day starts from zero');
-  const page = { '--d2t-bg': 'rgb(10 20 30)', '--d2t-fg': '#fff' };
+  const themed = () => JSON.parse(JSON.stringify(saved.theme));
   assert.deepEqual(
-    JSON.parse(JSON.stringify(saved.theme)),
-    { ...page, '--d2t-card': 'rgb(10 20 30)', '--d2t-card-fg': '#fff', '--d2t-accent': '#0af' },
-    'the field pair has a crafted value, so fields fall back to the page pair',
+    themed(),
+    { '--d2t-bg': '#0a141e', '--d2t-fg': '#ffffff', '--d2t-card': '#0a141e', '--d2t-card-fg': '#ffffff', '--d2t-accent': '#00aaff' },
+    'the field pair has a crafted value, so fields fall back to the page pair; a var() focus color is no color',
   );
   assert.equal(registered.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(registered[0].options)), {
     matches: ['*://x.com/*'],
-    css: [{ code: 'html #dis2tract { --d2t-bg: rgb(10 20 30); --d2t-fg: #fff; --d2t-card: rgb(10 20 30); --d2t-card-fg: #fff; --d2t-accent: #0af; }' }],
+    css: [{ code: 'html #dis2tract:not([data-live]) { --d2t-bg: #0a141e; --d2t-fg: #ffffff; --d2t-card: #0a141e; --d2t-card-fg: #ffffff; --d2t-accent: #00aaff; }' }],
     runAt: 'document_start',
   });
+  // a translucent field goes out as it shows over the page, so the unlock sheet never lets the block screen through.
+  // the tab accent is too light for that field and each text color vanishes on the other side: the gray between
+  current = { colors: { frame: '#000', tab_background_text: '#fff', toolbar_field: 'rgba(255, 255, 255, 0.9)', toolbar_field_text: '#000', tab_line: '#0af' } };
+  on.updated();
+  await settle();
+  assert.deepEqual(themed(), { '--d2t-bg': '#000000', '--d2t-fg': '#ffffff', '--d2t-card': '#e6e6e6', '--d2t-card-fg': '#000000', '--d2t-accent': '#6e6e6e' });
+  // firefox color's default preset: white on light blue, 2.2:1, so the default palette stays
+  current = { colors: { frame: 'rgb(142, 179, 201)', tab_background_text: '#fff' } };
+  on.updated();
+  await settle();
+  assert.deepEqual(themed(), {});
+  assert.equal(registered.length, 2, 'nothing to register for an unreadable theme');
   current = { colors: null }; // switched to a theme without colors
   on.updated();
   await settle();
-  assert.ok(registered[0].gone, 'the old stylesheet is unregistered');
-  assert.equal(registered.length, 1, 'nothing to register for a colorless theme');
-  assert.deepEqual(JSON.parse(JSON.stringify(saved.theme)), {});
+  assert.ok(registered.every((r) => r.gone), 'the old stylesheets are unregistered');
+  assert.equal(registered.length, 2, 'nothing to register for a colorless theme');
+  assert.deepEqual(themed(), {});
   assert.equal(typeof on.click, 'function', 'the toolbar button opens the settings');
   assert.match(on.farewell, /^https:\/\/[^#?]+$/, 'a plain https page, nothing about the user appended');
   // android: no theme api, no error. a day later the list is due again, and a cut-off download keeps the last copy

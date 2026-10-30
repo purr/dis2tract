@@ -2,44 +2,86 @@
 // storage answers only after a page's first paint, so the colors also go out as a registered stylesheet that
 // firefox injects at document_start, like the manifest css. a registration dies with the page that made it,
 // hence the persistent background. firefox for android has no theme api: there the default palette stays.
-// each pair is designed by the theme to contrast, so a pair is taken whole or not at all
+// a theme's pairs are meant to contrast, but nothing checks it (firefox color's own default preset is white on light
+// blue, 2.2:1), so each pair is checked as the pages draw it, and taken whole or not at all
 const PAGE = [['--d2t-bg', 'frame'], ['--d2t-fg', 'tab_background_text']];
 const FIELD = [['--d2t-card', 'toolbar_field'], ['--d2t-card-fg', 'toolbar_field_text']];
 const ACCENT = ['toolbar_field_border_focus', 'tab_line']; // the theme's own focus ring color, else its tab accent
 const MATCHES = browser.runtime.getManifest().content_scripts.flatMap((cs) => cs.matches);
 
-// theme colors are css strings or [r, g, b(, a)] arrays. anything that is not a plain color is dropped: the values
-// land in a stylesheet on four big sites, and a crafted value could otherwise smuggle in css rules.
-function color(c) {
+// theme colors are css strings in any syntax firefox knows, or [r, g, b(, a)] arrays. a canvas reads a color back
+// as #rrggbb or rgba(r, g, b, a) and keeps its old one for anything that is not a plain color, var() included
+// (firefox source, CanvasRenderingContext2D::SetStyleFromString and StyleColorToString, 2026-10). only these
+// numbers go on: the values land in a stylesheet on the blocked sites, where a crafted string passed on as is
+// could add rules or, through var(), load a url
+const canvas = document.createElement('canvas').getContext('2d');
+function rgba(c) {
   const v = Array.isArray(c) ? `rgb(${c.slice(0, 3).join(' ')}${c.length > 3 ? ` / ${c[3]}` : ''})` : c;
-  return typeof v === 'string' && !/[;{}]/.test(v) && CSS.supports('color', v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const read = (old) => {
+    canvas.fillStyle = old;
+    canvas.fillStyle = v;
+    return canvas.fillStyle;
+  };
+  const s = read('#000000');
+  if (s !== read('#ffffff')) return null; // not a color: each read kept the old one
+  return s.startsWith('#') ? [...s.slice(1).match(/../g).map((x) => parseInt(x, 16)), 1] : s.match(/[\d.]+/g).map(Number);
 }
+// css blends in srgb: a translucent color as it shows over an opaque one (rounded, as it is passed on), and
+// color-mix(in srgb, c share, under)
+const over = ([r, g, b, a], under) => [r, g, b].map((x, i) => Math.round(x * a + under[i] * (1 - a)));
+const mix = (c, under, share) => c.map((x, i) => x * share + under[i] * (1 - share));
+// wcag 2 relative luminance and contrast ratio
+const luminance = (c) => c.reduce((sum, x, i) => {
+  const s = x / 255;
+  return sum + [0.2126, 0.7152, 0.0722][i] * (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4);
+}, 0);
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+const hex = (c) => `#${c.map((x) => x.toString(16).padStart(2, '0')).join('')}`;
 
 var theme = {}; // var: the options page reads it synchronously through getBackgroundPage(), before its first paint
 let registered = null;
 
 async function syncTheme() {
   const { colors } = await browser.theme.getCurrent();
-  const pick = (pair) => {
-    const values = pair.map(([, key]) => color(colors?.[key]));
-    return values.every(Boolean) ? values : null;
+  // a pair as the pages draw it, or null: the page opaque (overlay.css drops its alpha), a field over the page,
+  // text over its background. readable: the 70% muted mix of the text (overlay.css) keeps 4.5:1 for small text
+  const pair = ([[, back], [, text]], under) => {
+    const [b, t] = [rgba(colors?.[back]), rgba(colors?.[text])];
+    if (!b || !t) return null;
+    const bg = under ? over(b, under) : b.slice(0, 3);
+    const fg = over(t, bg);
+    return contrast(mix(fg, bg, 0.7), bg) >= 4.5 ? [bg, fg] : null;
   };
   const next = {};
-  const page = pick(PAGE);
+  const page = pair(PAGE);
   if (page) {
-    // fields fall back to the page pair: the stylesheet's white default field would be unreadable on a dark theme
-    const field = pick(FIELD) ?? page;
-    PAGE.forEach(([name], i) => (next[name] = page[i]));
-    FIELD.forEach(([name], i) => (next[name] = field[i]));
-    const accent = ACCENT.map((key) => color(colors?.[key])).find(Boolean);
-    if (accent) next['--d2t-accent'] = accent;
+    // fields fall back to the page pair: the stylesheet's white default field would be unreadable on a dark theme.
+    // a translucent field is taken as it shows over the page, so the unlock sheet hides the block screen under it
+    const field = pair(FIELD, page[0]) ?? page;
+    // focus rings and the caret sit on the page and in fields: 3:1 against both (wcag 1.4.11). the default accent
+    // is no safe fallback on a themed page, so a text color stands in, or between a dark page and a light field
+    // (where each text color vanishes on the other) the gray as far in contrast from both
+    const y = Math.sqrt((luminance(page[0]) + 0.05) * (luminance(field[0]) + 0.05)) - 0.05;
+    const gray = Array(3).fill(Math.round(255 * (y <= 0.0031308 ? 12.92 * y : 1.055 * y ** (1 / 2.4) - 0.055)));
+    const accent = [...ACCENT.map((key) => rgba(colors?.[key])).filter(Boolean).map((c) => over(c, page[0])), page[1], field[1], gray]
+      .find((c) => contrast(c, page[0]) >= 3 && contrast(c, field[0]) >= 3) ?? page[1];
+    PAGE.forEach(([name], i) => (next[name] = hex(page[i])));
+    FIELD.forEach(([name], i) => (next[name] = hex(field[i])));
+    next['--d2t-accent'] = hex(accent);
   }
   theme = next;
   await registered?.unregister();
   registered = null;
   const decls = Object.entries(next).map(([k, v]) => `${k}: ${v};`).join(' ');
-  // html #dis2tract outranks the #dis2tract defaults in overlay.css whatever the injection order
-  if (decls) registered = await browser.contentScripts.register({ matches: MATCHES, css: [{ code: `html #dis2tract { ${decls} }` }], runAt: 'document_start' });
+  // firefox takes an injected sheet out of a page only when the page goes (ExtensionContent.sys.mjs, 2026-10), not
+  // on unregister(), so a page loaded under an older theme keeps this one. it therefore covers only the first paint:
+  // content.js marks the overlay data-live once it paints the stored theme, and keys a newer theme lacks fall back
+  // to the overlay.css defaults. still outranks those defaults whatever the injection order
+  if (decls) registered = await browser.contentScripts.register({ matches: MATCHES, css: [{ code: `html #dis2tract:not([data-live]) { ${decls} }` }], runAt: 'document_start' });
   await browser.storage.local.set({ theme: next }); // pages already open restyle from this
 }
 

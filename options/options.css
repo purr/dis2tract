@@ -1,5 +1,5 @@
 /* ios settings look (see DESIGN.md at the repo root), same variables as css/overlay.css.
-   options.js overrides bg/fg, card/card-fg and accent with the firefox theme. */
+   options.js overrides bg/fg, card/card-fg and accent with the firefox theme, as checked by background.js. */
 :root {
   color-scheme: light dark;
   --d2t-bg: #f5f5f7;
@@ -7,8 +7,12 @@
   --d2t-card: #ffffff;
   --d2t-card-fg: var(--d2t-fg);
   --d2t-accent: #0071e3;
-  --d2t-on: #34c759;
-  --d2t-muted: color-mix(in srgb, var(--d2t-fg) 70%, var(--d2t-bg)); /* 70%: at least 4.5:1 for small text */
+  /* ios's darker accessibility green, in both schemes: 4.4:1 against the white knob and the light card, 3.9:1
+     against the dark card. the usual #34c759 and #30d158 left the knob at 2.2:1 and 2.0:1, under wcag 1.4.11's 3:1 */
+  --d2t-on: #248a3d;
+  /* 70%: at least 4.5:1 for small text. text inside a card mixes from the card's own pair */
+  --d2t-muted: color-mix(in srgb, var(--d2t-fg) 70%, var(--d2t-bg));
+  --d2t-card-muted: color-mix(in srgb, var(--d2t-card-fg) 70%, var(--d2t-card));
   --d2t-line: color-mix(in srgb, var(--d2t-fg) 13%, transparent);
   --d2t-ring: 0 0 0 4px color-mix(in srgb, var(--d2t-accent) 34%, transparent);
 }
@@ -18,7 +22,6 @@
     --d2t-fg: #f5f5f7;
     --d2t-card: #1c1c1e;
     --d2t-accent: #2997ff;
-    --d2t-on: #30d158;
   }
 }
 
@@ -41,14 +44,19 @@ textarea {
   margin: 0;
   padding: 12px 16px;
   border: 0;
+  border-radius: inherit; /* the focus ring follows the card's corners */
   outline: 0;
   background: transparent;
   color: var(--d2t-card-fg);
   font: inherit;
   resize: vertical;
   caret-color: var(--d2t-accent);
+  transition: box-shadow 0.3s ease;
 }
-textarea::placeholder { color: var(--d2t-muted); opacity: 1; }
+textarea::placeholder { color: var(--d2t-card-muted); opacity: 1; }
+/* the same ring as the number fields get. the transparent outline is for forced colors (windows contrast themes),
+   which drop the shadow and draw the outline in the system color */
+textarea:focus { box-shadow: inset 0 0 0 2px var(--d2t-accent); outline: 2px solid transparent; outline-offset: -2px; }
 .banner {
   display: flex;
   align-items: center;
@@ -58,13 +66,14 @@ textarea::placeholder { color: var(--d2t-muted); opacity: 1; }
   padding: 10px 10px 10px 16px;
   border-radius: 12px;
   background: color-mix(in srgb, var(--d2t-accent) 14%, var(--d2t-card));
+  color: var(--d2t-card-fg); /* the card's text color, as the background is mostly the card */
   font-size: 15px;
 }
 .banner[hidden] { display: none; }
 .banner button {
   flex: none;
   padding: 6px 14px;
-  border: 0;
+  border: 1px solid transparent; /* drawn in forced colors, which turn the button's background into the page color */
   border-radius: 999px;
   background: var(--d2t-card);
   color: var(--d2t-card-fg);
@@ -95,7 +104,7 @@ output { margin-top: 20px; }
   transition: background-color 0.15s ease;
 }
 .row + .row::before { content: ""; position: absolute; top: 0; right: 0; left: 16px; border-top: 1px solid var(--d2t-line); }
-.value { display: flex; align-items: center; gap: 6px; color: var(--d2t-muted); }
+.value { display: flex; align-items: center; gap: 6px; color: var(--d2t-card-muted); }
 
 /* values sit right-aligned like ios; a soft pill shows they are editable on hover and while typing */
 .row input[type="text"],
@@ -115,8 +124,9 @@ output { margin-top: 20px; }
   transition: background-color 0.2s ease, box-shadow 0.3s ease;
 }
 .row input[type="text"] { width: 11em; }
-.row input::placeholder { color: var(--d2t-muted); opacity: 1; }
-.row input:focus { background: color-mix(in srgb, var(--d2t-card-fg) 8%, var(--d2t-card)); box-shadow: 0 0 0 2px var(--d2t-accent); }
+.row input::placeholder { color: var(--d2t-card-muted); opacity: 1; }
+/* the transparent outline shows in forced colors, which drop the shadow */
+.row input:focus { background: color-mix(in srgb, var(--d2t-card-fg) 8%, var(--d2t-card)); box-shadow: 0 0 0 2px var(--d2t-accent); outline: 2px solid transparent; }
 @media (hover: hover) {
   .row:hover:not(:focus-within) { background: color-mix(in srgb, var(--d2t-card-fg) 4%, var(--d2t-card)); }
   .row:hover input:not(:focus) { background: color-mix(in srgb, var(--d2t-card-fg) 7%, var(--d2t-card)); }
@@ -131,7 +141,8 @@ output { margin-top: 20px; }
   width: 51px;
   height: 31px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--d2t-card-fg) 16%, var(--d2t-card));
+  /* 50%: the off track and the white knob on it at 3:1 against the card (wcag 1.4.11); 16% gave 1.4:1 */
+  background: color-mix(in srgb, var(--d2t-card-fg) 50%, var(--d2t-card));
   transition: background-color 0.2s ease, box-shadow 0.15s ease;
 }
 .switch::before {
@@ -149,6 +160,12 @@ output { margin-top: 20px; }
 input:checked + .switch { background: var(--d2t-on); }
 input:checked + .switch::before { transform: translateX(20px); }
 input:focus-visible + .switch { outline: 2px solid var(--d2t-accent); outline-offset: 2px; }
+/* forced colors (windows contrast themes) paint track, knob and card one color and drop the knob's shadow, so the
+   switch shows no state: the real checkbox, which firefox draws in system colors, takes its place */
+@media (forced-colors: active) {
+  .row input[type="checkbox"] { position: static; opacity: 1; }
+  .switch { display: none; }
+}
 
 /* reduced motion stops the knob sliding; color fades stay, they are not motion */
 @media (prefers-reduced-motion: reduce) {
