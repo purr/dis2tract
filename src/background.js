@@ -345,23 +345,49 @@ function redditMark({ name, attrs }, { post, sub }) {
 // address names is marked in it. the address is the tab's at the end: a single-page site's request can outlive the
 // route it started on, and details.documentUrl is the address the page was first loaded at (the loading principal's,
 // which pushState never changes: ChannelWrapper::GetDocumentURI, nsDocShell::UpdateURLAndHistory, 2026-10)
-function readJson(site, itemOf, marked) {
+// clean links (settings, links.js): x wraps every link in a t.co redirect, and its api answers carry each one's real
+// address next to it (an entity's url and expanded_url; a card's card_url is the same t.co), as the twitter-direct
+// userscript reads them (chocolateboy, 2026-10). every t.co value in an answer becomes its real address before x
+// gets it, so x shows, opens and copies the real link. whole values only: a post's text keeps its t.co, which its
+// entities' indices point into. null when there is nothing to swap
+let cleanLinks = DEFAULTS.cleanLinks;
+browser.storage.local.get('settings').then(({ settings }) => (cleanLinks = mergeSettings(settings).cleanLinks));
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.settings) cleanLinks = mergeSettings(changes.settings.newValue).cleanLinks;
+});
+function untco(text) {
+  const real = new Map();
+  anyObject(json(text), (v) => {
+    if (typeof v.url === 'string' && v.url.startsWith('https://t.co/') && typeof v.expanded_url === 'string') real.set(v.url, v.expanded_url);
+    return false;
+  });
+  if (!real.size) return null;
+  return text.replace(/"(https:(?:\\?\/){2}t\.co\\?\/\w+)"/g, (whole, link) => {
+    const target = real.get(link.replaceAll('\\/', '/'));
+    return target ? JSON.stringify(target) : whole;
+  });
+}
+function readJson(site, itemOf, marked, rewrite) {
   return ({ requestId, tabId, url: request }) => {
     const filter = browser.webRequest.filterResponseData(requestId);
     const chunks = [];
     filter.ondata = ({ data }) => chunks.push(data);
     filter.onstop = async () => {
       let hit = false;
+      let text = null;
       try {
         // no url: a tab gone to a site without host permission. a closed tab has nothing to send anywhere
         const { url } = await browser.tabs.get(tabId).catch(() => ({}));
         const item = url && itemOf(new URL(url));
         const decoder = new TextDecoder();
-        hit = Boolean(item) && marked(chunks.map((d) => decoder.decode(d, { stream: true })).join('') + decoder.decode(), item, request);
+        text = chunks.map((d) => decoder.decode(d, { stream: true })).join('') + decoder.decode();
+        hit = Boolean(item) && marked(text, item, request);
       } catch (e) {
         console.error(`dis2tract: reading ${site}'s adult labels failed, the answer goes through`, e);
       }
-      if (!hit) for (const data of chunks) filter.write(data);
+      const clean = !hit && cleanLinks && rewrite && text !== null ? rewrite(text) : null;
+      if (clean !== null) filter.write(new TextEncoder().encode(clean));
+      else if (!hit) for (const data of chunks) filter.write(data);
       filter.close(); // a marked answer ends empty: the app shows its own error until the porn page loads
       // the labeled page has committed by then: toPorn() takes its history entry, or on android steps over it
       if (hit) toPorn(tabId, { mark: site }, true);
@@ -412,7 +438,7 @@ function readReddit({ requestId, tabId, type, url }) {
 }
 
 const LABELED = [
-  { urls: ['*://x.com/i/api/graphql/*'], types: ['xmlhttprequest'], read: readJson('x', xItem, xMarked) },
+  { urls: ['*://x.com/i/api/graphql/*'], types: ['xmlhttprequest'], read: readJson('x', xItem, xMarked, untco) },
   { urls: ['*://*.reddit.com/*'], types: ['main_frame', 'xmlhttprequest'], read: readReddit },
   { urls: ['*://*.bsky.network/xrpc/*', '*://public.api.bsky.app/xrpc/*'], types: ['xmlhttprequest'], read: readJson('bluesky', blueskyItem, blueskyMarked) },
 ];

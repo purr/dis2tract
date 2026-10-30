@@ -27,6 +27,7 @@ most blockers shut the whole site. then you need one video, one profile or one m
 - **one question, one task**: every block screen asks why you're here and gives one thing to do instead, linked straight to it. after 30 minutes on these sites in a day, it shows that time and what it was enough for instead (below).
 - **the time adds up**: time on these sites counts per day, only while you use a page and never on the block screen. past 30 minutes, the block screen says how much, and one thing it was enough for: a 12 km run and its calories, 72 pages of a novel, a real dinner.
 - **unlocking is slow on purpose**: a 15-second pause, then a challenge with no pasting. 3 minutes of feed per unlock, counted only while you watch or scroll, with the time left at the top. 20 minutes apart, 10 a day, none at bedtime (23:00 to 5:00; settings can make it longer, never shorter).
+- **clean links**: a link you copy or open on these sites loses its tracking (youtube's `si`, tiktok's device and share fields, `utm_` and the like), and x's `t.co` links show, open and copy the real address. one switch in settings.
 - **nothing about you leaves the browser**: no servers, no analytics. its one download is the porn list, once a day; firefox also checks github for a new version once or twice a day.
 
 [how it works in detail →](docs/how-it-works.md)

@@ -1691,7 +1691,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
         return r;
       },
     },
-    storage: { local: { get: async () => structuredClone(saved), set: async (o) => { saved = { ...saved, ...o }; } } },
+    storage: { local: { get: async () => structuredClone(saved), set: async (o) => { saved = { ...saved, ...o }; } }, onChanged: { addListener() {} } },
     ...(withTheme && { theme: { getCurrent: async () => current, onUpdated: { addListener: (f) => (on.updated = f) } } }),
   });
   // a canvas in the background page, as firefox's behaves: anything that is not a plain color (var() too) leaves
@@ -1727,7 +1727,8 @@ test('background: theme pairs become a document_start stylesheet and a storage m
       browser: fakeBrowser(withTheme), document, console, Audio, URL, URLSearchParams, TextDecoder, fetch,
       setInterval: () => 0, setTimeout: (f) => timeouts.push(f), Date: class extends Date { static now() { return clock.now; } },
     });
-    vm.runInContext(read('background.js'), ctx, { filename: 'background.js' });
+    // the background page loads settings.js first, as the manifest does
+    for (const f of ['settings.js', 'background.js']) vm.runInContext(read(f), ctx, { filename: f });
     return ctx;
   };
   const bg = background(true);
@@ -1887,6 +1888,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
 
 test('background: an adult mark counts only on the item the tab\'s address names, and a marked answer never reaches the page', async () => {
   const sent = []; // [tabId, tabs.update properties]
+  const changed = []; // storage.onChanged listeners
   const watched = []; // webRequest listeners: { f, filter }
   const streams = {}; // response filters by request id
   const addresses = {}; // each tab's address now; none for a tab on a site without host permission
@@ -1905,11 +1907,12 @@ test('background: an adult mark counts only on the item the tab\'s address names
     },
     tabs: { get: async (tabId) => ({ url: addresses[tabId] }), update: (tabId, props) => sent.push([tabId, props]), query: async () => [] },
     browserAction: { onClicked: { addListener() {} } },
-    storage: { local: { get: async () => ({}), set: async () => {} } },
+    storage: { local: { get: async () => ({}), set: async () => {} }, onChanged: { addListener: (f) => changed.push(f) } },
   };
   const document = { createElement: () => ({ getContext: () => ({}) }) };
   // the porn list download never answers: only the labels are under test
-  vm.runInContext(read('background.js'), vm.createContext({ browser, document, console, URL, URLSearchParams, TextDecoder, fetch: () => new Promise(() => {}), setInterval() {} }));
+  const ctx = vm.createContext({ browser, document, console, URL, URLSearchParams, TextDecoder, TextEncoder, fetch: () => new Promise(() => {}), setInterval() {} });
+  for (const f of ['settings.js', 'background.js']) vm.runInContext(read(f), ctx, { filename: f });
   const pattern = { x: '*://x.com/i/api/graphql/*', reddit: '*://*.reddit.com/*', bluesky: '*://public.api.bsky.app/xrpc/*' };
   let tabs = 0;
   // one request from a tab at that address, its answer split the way a response streams in: what went to the porn
@@ -1954,6 +1957,17 @@ test('background: an adult mark counts only on the item the tab\'s address names
   assert.deepEqual((await answer(media, timeline(repost))).sent, []);
   // x's own pages sit where a handle would, and their calls carry no profile's userId
   assert.deepEqual((await answer({ site: 'x', address: 'https://x.com/home', request: call('HomeTimeline', { count: 20 }) }, timeline(post('7', 'home', { adult_content: true })))).sent, []);
+  // clean links: every t.co value becomes the real address before x gets the answer (a link and a card by the same
+  // t.co), the post's text keeps its own, which the entity's indices point into. switched off, the answer is as sent
+  const linked = JSON.stringify({ full_text: 'look https://t.co/abc', entities: { urls: [{ display_url: 'example.com/a', expanded_url: 'https://example.com/a?id=1', url: 'https://t.co/abc', indices: [5, 21] }] }, card: { binding_values: [{ key: 'card_url', value: { string_value: 'https://t.co/abc', type: 'STRING' } }] } });
+  const home = { site: 'x', address: 'https://x.com/home', request: call('HomeTimeline', { count: 20 }) };
+  assert.deepEqual(JSON.parse((await answer(home, linked)).page), {
+    full_text: 'look https://t.co/abc',
+    entities: { urls: [{ display_url: 'example.com/a', expanded_url: 'https://example.com/a?id=1', url: 'https://example.com/a?id=1', indices: [5, 21] }] },
+    card: { binding_values: [{ key: 'card_url', value: { string_value: 'https://example.com/a?id=1', type: 'STRING' } }] },
+  });
+  for (const f of changed) f({ settings: { newValue: { version: 2, cleanLinks: false } } }, 'local');
+  assert.equal((await answer(home, linked)).page, linked);
 
   // reddit: the post of the address by its own nsfw or its community's subreddit-nsfw, as the page streams in. a
   // title, a community description and a related post beside it are no marks

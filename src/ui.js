@@ -39,3 +39,24 @@ function answer([question, ideas]) {
 function paint(el, theme = {}) {
   for (const [k, v] of Object.entries(theme)) el.style.setProperty(k, v);
 }
+
+// puts a wrapper of ours over a page method. an exported wrapper dies with this script's sandbox (an extension
+// update, reload or disable), and a page calling it then throws until reload. so each wrapper carries the page's
+// own method along, and the next instance of this script wraps that one, never a dead wrapper of an old instance.
+// 0.7.0 and older left theirs without that mark: dead since that version's sandbox went, one passes for the page's
+// own method and throws on every call, so firefox's own method (`own`, read through the xray) stands in for it.
+// after a disable nothing comes next: the dead wrappers stay until the tab reloads. content scripts only
+// (exportFunction): content.js and links.js
+function wrap(proto, own, name, make) {
+  const page = proto[name].dis2tractPage ?? proto[name];
+  const call = (self, ...args) => {
+    try {
+      return page.call(self, ...args);
+    } catch (e) {
+      if (e?.message !== 'can\'t access dead object') throw e;
+      return own.call(self, ...args);
+    }
+  };
+  exportFunction(make(call), proto, { defineAs: name });
+  proto[name].dis2tractPage = page;
+}

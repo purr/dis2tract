@@ -41,6 +41,7 @@
   ],
   "background": {
     "scripts": [
+      "src/settings.js",
       "src/background.js"
     ],
     "persistent": true
@@ -83,7 +84,8 @@
         "src/sites.js",
         "src/challenges.js",
         "src/suggestions.js",
-        "src/content.js"
+        "src/content.js",
+        "src/links.js"
       ],
       "run_at": "document_start"
     }

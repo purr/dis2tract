@@ -13,6 +13,7 @@ var DEFAULTS = {
   bedtimeFrom: 23,
   bedtimeTo: 5,
   chime: true, // a clock chime when a block appears while browsing
+  cleanLinks: true, // links copied or opened on the sites lose their tracking, and x's t.co (links.js, background.js)
 };
 // [min, max] of each number setting; the options page builds its inputs from this, loading clamps older saves.
 // bedtime can only widen 23:00-5:00, never shrink: every start lies after every end, so the window always wraps

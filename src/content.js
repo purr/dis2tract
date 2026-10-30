@@ -718,25 +718,6 @@
     }, true);
   }
   document.addEventListener('play', (e) => overlay && e.target.pause(), true);
-  // puts a wrapper of ours over a page method. an exported wrapper dies with this script's sandbox (an extension
-  // update, reload or disable), and a page calling it then throws until reload. so each wrapper carries the page's
-  // own method along, and the next instance of this script wraps that one, never a dead wrapper of an old instance.
-  // 0.7.0 and older left theirs without that mark: dead since that version's sandbox went, one passes for the page's
-  // own method and throws on every call, so firefox's own method (`own`, read through the xray) stands in for it.
-  // after a disable nothing comes next: the dead wrappers stay until the tab reloads
-  function wrap(proto, own, name, make) {
-    const page = proto[name].dis2tractPage ?? proto[name];
-    const call = (self, ...args) => {
-      try {
-        return page.call(self, ...args);
-      } catch (e) {
-        if (e?.message !== 'can\'t access dead object') throw e;
-        return own.call(self, ...args);
-      }
-    };
-    exportFunction(make(call), proto, { defineAs: name });
-    proto[name].dis2tractPage = page;
-  }
   // players in no document at all (tiktok's photo-post music is a new Audio() that is never attached) are out of
   // reach of every pause path above. so the page's own play() is wrapped: while the block screen is up nothing
   // starts, and whatever started before is remembered to be paused. the set is emptied on every pause, so it only
