@@ -8,7 +8,8 @@
 // route: turns special search-box input into a path (reddit's r/name).
 // links: the block screen's ways on. logged out, the / of instagram, facebook and linkedin is their log-in form,
 // blocked as the home feed, so they link to it ("log in"); logged in, that address opens no feed of its own.
-// tweaks: optional extras with a label and a default; run(url) returns true once done for that page.
+// tweaks: optional extras with a label and a default; run(url) returns true once done for that page, undo(url)
+// takes back what run left behind while the tweak (or its whole site) is switched off.
 // hosts: only hosts that serve pages. youtube.com, m.tiktok.com, twitter.com, mobile.x.com, instagram.com,
 // m.instagram.com, reddit.com, new/m/sh/np/i.reddit.com and threads.net answer with redirects to these, so the
 // content script never runs there (checked with curl, 2026-10-27). a "*." host is a manifest wildcard; hostMatch
@@ -47,7 +48,7 @@ var SITES = {
     free: (u) => /^\/(results|@[^/]+|(channel|c|user)\/[^/]+)(\/|$)/.test(path(u)),
     me: '/profile', // login-gated redirect to your own channel
     links: [['subscriptions', '/feed/subscriptions'], ['history', '/feed/history'], ['playlists', '/feed/playlists']],
-    tweaks: { theater: { label: 'theater mode on every video', on: true, run: theater } },
+    tweaks: { theater: { label: 'theater mode on every video', on: true, run: theater, undo: unwide } },
   },
   x: {
     name: 'x',
@@ -251,10 +252,24 @@ function hub(name, channel) {
 // for youtube (page.js), both maintained in 2026-10. desktop only: mobile youtube has no theater mode.
 function theater(u) {
   if (location.hostname !== 'www.youtube.com' || path(u) !== '/watch') return true;
-  document.cookie = 'wide=1; domain=.youtube.com; path=/; max-age=31536000'; // the next full load opens in theater
+  // the next full load opens in theater: wide=1 for this session only, as youtube's own toggle and improvedtube
+  // write it. versions up to 0.7.0 kept it a year, which left videos wide long after theater mode, or dis2tract,
+  // was switched off; written again, that one turns into a session cookie too. wideSet: true marks a cookie this
+  // wrote where there was none, for unwide()
+  if (!/(^|;\s*)wide=1(;|$)/.test(document.cookie)) browser.storage.local.set({ wideSet: true });
+  document.cookie = 'wide=1; domain=.youtube.com; path=/';
   const watch = document.querySelector('ytd-watch-flexy');
   if (watch?.hasAttribute('theater')) return true;
   const button = watch && document.querySelector('.ytp-chrome-bottom .ytp-size-button');
   button?.click();
   return Boolean(button);
+}
+
+// theater mode switched off (or youtube): the cookie theater() wrote would keep opening videos wide, so it goes,
+// once; wideSet: false then leaves the cookie alone, so a wide layout picked by hand afterwards stays. with no mark
+// at all it goes once too: up to 0.7.0, theater() set a year-long one and marked nothing
+async function unwide() {
+  if ((await browser.storage.local.get('wideSet')).wideSet === false) return;
+  if (/(^|;\s*)wide=1(;|$)/.test(document.cookie)) document.cookie = 'wide=; domain=.youtube.com; path=/; max-age=0';
+  await browser.storage.local.set({ wideSet: false });
 }

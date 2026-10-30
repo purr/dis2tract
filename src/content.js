@@ -53,6 +53,7 @@
   let traversed = false; // the url change came from back/forward
   let unlimited = false; // a conversation, search results or a profile: no scroll budget
   let tweaked = null; // the url the site's tweaks are done for
+  let undone = null; // the url the switched-off tweaks were taken back on
   let tweakTries = 0;
   const chain = []; // distinct items viewed in a row, oldest first
   let scrolled = 0; // screens scrolled down on this url, each step measured against the window height at that moment
@@ -560,9 +561,17 @@
   // the site's extras (youtube theater mode): tried each tick until done for this url, given up after ~10 s
   function tweak() {
     // not before storage answers: a tweak switched off in settings must never run, not even once
-    if (!ready || tweaked === href || settings.sites[siteId] === false) return;
+    if (!ready || tweaked === href) return;
     const u = new URL(location.href);
-    const left = Object.entries(site.tweaks ?? {}).filter(([name, t]) => (settings.toggles[`${siteId}.${name}`] ?? t.on) && !t.run(u));
+    const tweaks = Object.entries(site.tweaks ?? {});
+    const on = ([name, t]) => settings.sites[siteId] !== false && (settings.toggles[`${siteId}.${name}`] ?? t.on);
+    // one switched off, or its whole site, takes back what it left behind (theater's cookie), once per url
+    if (undone !== href) {
+      undone = href;
+      for (const entry of tweaks) if (!on(entry)) entry[1].undo?.(u);
+    }
+    if (settings.sites[siteId] === false) return;
+    const left = tweaks.filter((entry) => on(entry) && !entry[1].run(u));
     if (!left.length) tweaked = href;
     else if (++tweakTries > 25) {
       console.warn(`dis2tract: ${left.map(([name]) => name).join(', ')} found nothing to act on at ${href}; the site may have changed`);

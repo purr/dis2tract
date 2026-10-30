@@ -1253,6 +1253,8 @@ test('youtube watch pages ask for theater mode, unless it is switched off', asyn
   const t = boot('https://www.youtube.com/watch?v=a');
   await settle();
   assert.match(t.doc.cookie, /^wide=1/);
+  assert.ok(!/max-age|expires/.test(t.doc.cookie), 'for this session only');
+  assert.equal(t.data.wideSet, true, 'marked as written by dis2tract');
   const off = boot('https://www.youtube.com/watch?v=a', { settings: { version: 2, toggles: { 'youtube.theater': false } } });
   await settle();
   off.tick();
@@ -1263,6 +1265,25 @@ test('youtube watch pages ask for theater mode, unless it is switched off', asyn
   await settle();
   for (let i = 0; i < 40; i++) lost.tick();
   assert.equal(writes, 26);
+});
+
+test('theater mode or youtube switched off takes back the cookie dis2tract wrote, once', async () => {
+  const off = { version: 2, toggles: { 'youtube.theater': false } };
+  // marked as written by dis2tract, or not marked at all: up to 0.7.0 it was a year-long cookie with no mark
+  for (const stored of [{ settings: off, wideSet: true }, { settings: { version: 2, sites: { youtube: false } }, wideSet: true }, { settings: off }]) {
+    const t = boot('https://www.youtube.com/watch?v=a', stored, (doc) => { doc.cookie = 'wide=1'; });
+    await settle();
+    t.tick();
+    await settle();
+    assert.equal(t.doc.cookie, 'wide=; domain=.youtube.com; path=/; max-age=0', JSON.stringify(stored));
+    assert.equal(t.data.wideSet, false, 'once');
+  }
+  // a wide layout picked by hand after that stays
+  const own = boot('https://www.youtube.com/watch?v=a', { settings: off, wideSet: false }, (doc) => { doc.cookie = 'wide=1'; });
+  await settle();
+  own.tick();
+  await settle();
+  assert.equal(own.doc.cookie, 'wide=1');
 });
 
 test('scroll budget: 12 screens, restore jumps ignored, reset by navigation', async () => {
