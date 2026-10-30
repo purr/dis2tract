@@ -3,7 +3,7 @@
 ```sh
 npm ci           # once: installs web-ext
 npm test         # url rules for every site, settings, challenges, and the engine against a fake dom
-npm run lint     # web-ext lint, warnings count as errors
+npm run lint     # web-ext lint --self-hosted (allows update_url), warnings count as errors
 npm run build    # unsigned .zip in web-ext-artifacts/
 npm start        # desktop firefox with the extension loaded
 npx web-ext run -t firefox-android --adb-device DEVICE --firefox-apk org.mozilla.firefox
@@ -19,19 +19,22 @@ which files stay out of the package is set once, in `webExt.ignoreFiles` in `pac
 | `src/sites.js` | url rules per site: feeds, single items, search and profile urls |
 | `src/settings.js` | defaults, limits and the unlock rules |
 | `src/challenges.js` | the unlock challenges |
-| `src/suggestions.js` | the roast questions and their tasks |
-| `src/background.js` | theme colors, toolbar button, uninstall page, the day's time on social media |
-| `css/overlay.css` | block screen and unlock sheet |
+| `src/suggestions.js` | the roast questions and their tasks, the porn page's lines, what the day's time was enough for |
+| `src/ui.js` | the block screen's parts that the porn page shares |
+| `src/background.js` | theme colors, toolbar button, the chime, porn sites and adult labels, address changes passed to the tab, the day's time on social media, private windows' runs of items, uninstall page |
+| `css/overlay.css` | block screen, unlock sheet and the porn page |
 | `options/` | the settings page |
+| `porn/` | the page porn tabs are sent to, and its two clips |
+| `sounds/` | the chime |
 
-rules are url-based, so a site redesign rarely breaks them; a site that moves a feed to a new url needs a new rule in `src/sites.js`. `DESIGN.md` is the apple-style reference the ui follows. `pages/why-the-scroll-wins.html` explains why feeds are hard to put down and what research says helps; open it in any browser.
+rules are url-based, so a site redesign rarely breaks them; a site that moves a feed to a new url needs a new rule in `src/sites.js`. `DESIGN.md` is the stock apple.com design analysis (from awesome-design-md) the base colors, type and pills come from; where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `css/overlay.css` and `options/options.css` win. `pages/why-the-scroll-wins.html` explains why feeds are hard to put down and what research says helps; open it in any browser.
 
 ## builds and releases
 
-github actions (`.github/workflows/build.yml`) runs on every push and pull request:
+github actions (`.github/workflows/build.yml`) runs on every push to main, every pull request, and on demand:
 
-- **every commit**: tests, lint, and an unsigned `dis2tract-<version>-<commit>.zip`, downloadable from the run's page in the actions tab.
-- **a new version**: published as release `v<version>`, signed by mozilla, with its `CHANGELOG.md` section as the release notes.
+- **every run** (a push builds its last commit): tests, lint, and an unsigned `dis2tract-<version>-<commit>.zip`, downloadable from the run's page in the actions tab.
+- **a new version**: published as release `v<version>`, signed by mozilla, with its `CHANGELOG.md` section as the release notes, and an `updates.json` that installed copies check through `update_url` in `manifest.json`. that address must stay `https://github.com/purr/dis2tract/releases/latest/download/updates.json`: every installed copy keeps checking the address its version shipped with, so the release fails before signing when it doesn't match the repository (after a rename, or in a fork).
 
 to release:
 

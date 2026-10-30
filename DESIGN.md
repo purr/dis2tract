@@ -273,6 +273,8 @@ components:
     padding: 64px
 ---
 
+> dis2tract takes its base colors, type and pills from this analysis of apple.com. where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `css/overlay.css` and `options/options.css` win.
+
 ## Overview
 
 Apple's web presence is a masterclass in **reverent product photography framed by near-invisible UI**. Every page is a stack of edge-to-edge product "tiles" — alternating light and dark canvases, each centered on a hero headline, a one-line tagline, two tiny blue pill CTAs, and an impossibly crisp product render. Nothing competes with the product. Typography is confident but quiet; color is either pure white, an off-white parchment, or a near-black tile; interactive elements are a single, quiet blue.

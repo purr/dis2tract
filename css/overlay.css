@@ -1,5 +1,5 @@
 /* injected by the manifest, so page csp cannot block it. every rule is id-scoped to win over site styles.
-   look: apple's screen time limit screen (DESIGN.md at the repo root), painted with the firefox theme's colors. */
+   look: apple's screen time limit screen (base colors and type from DESIGN.md), painted with the firefox theme's colors. */
 html[data-dis2tract-blocked],
 html[data-dis2tract-blocked] body {
   overflow: hidden !important;
