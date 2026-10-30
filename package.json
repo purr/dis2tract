@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test": "node --test",
-    "lint": "web-ext lint --warnings-as-errors",
+    "lint": "web-ext lint --self-hosted --warnings-as-errors",
     "build": "web-ext build --overwrite-dest",
     "start": "web-ext run"
   },

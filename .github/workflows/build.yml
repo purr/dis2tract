@@ -1,7 +1,8 @@
 # every push and pull request: tests, lint, and an unsigned build to download from the run's page.
 # a push to main whose manifest.json version has no release yet: signed by mozilla (unlisted) and published as
-# release v<version>, with that version's CHANGELOG.md section as notes. manifest.json is the only place the
-# version lives. mozilla signs each version once, so a release that fails after signing needs a new version.
+# release v<version>, with that version's CHANGELOG.md section as notes and the updates.json that installed copies
+# update from. manifest.json is the only place the version lives. mozilla signs each version once, so a release
+# that fails after signing needs a new version.
 name: build
 
 on:
@@ -80,6 +81,24 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: update manifest
+        # installed copies poll update_url (manifest.json) once or twice a day, always the address their own version
+        # shipped with (extensionworkshop.com updating-your-extension, 2026-10): a release with a wrong one strands its
+        # users. checked and written before signing, where failing costs no version, and outside the source folder,
+        # which web-ext would pack. firefox reads "applications" here, not browser_specific_settings
+        # (AddonUpdateChecker.sys.mjs, 2026-10); its strict_min_version keeps the update from a firefox too old for it.
+        run: |
+          releases="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases"
+          url=$(jq -r .browser_specific_settings.gecko.update_url manifest.json)
+          if [ "$url" != "$releases/latest/download/updates.json" ]; then
+            echo "::error::update_url in manifest.json is \"$url\", but releases publish updates.json at $releases/latest/download/updates.json"
+            exit 1
+          fi
+          jq --arg releases "$releases" --arg v "$VERSION" '.browser_specific_settings.gecko as $gecko
+            | {addons: {($gecko.id): {updates: [{version: $v,
+                update_link: "\($releases)/download/v\($v)/dis2tract-\($v).xpi",
+                applications: {gecko: {strict_min_version: $gecko.strict_min_version}}}]}}}' \
+            manifest.json > "$RUNNER_TEMP/updates.json"
       - name: sign with mozilla (unlisted)
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
@@ -100,5 +119,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: dis2tract ${{ env.VERSION }}
           body_path: notes.md
-          files: dis2tract-${{ env.VERSION }}.xpi
+          files: |
+            dis2tract-${{ env.VERSION }}.xpi
+            ${{ runner.temp }}/updates.json
           fail_on_unmatched_files: true
