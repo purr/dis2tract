@@ -47,8 +47,14 @@ function applyTheme(theme = {}) {
   document.documentElement.style.cssText = '';
   for (const [k, v] of Object.entries(theme)) document.documentElement.style.setProperty(k, v);
 }
-// synchronous, so the first paint already has the theme; storage carries later theme changes
-applyTheme(browser.extension.getBackgroundPage()?.theme);
+// synchronous, so the first paint already has the theme; storage carries later theme changes. a private window gets
+// no background page (getBackgroundPage() is null there, bug 1329304): storage fills the theme in a moment later
+const background = browser.extension.getBackgroundPage();
+applyTheme(background?.theme);
+if (!background) store.get('theme').then(({ theme }) => applyTheme(theme));
+// android plays no bell (background.js: one tab sounds at a time there, and it would stop another tab's audio), so
+// its only switch would do nothing
+browser.runtime.getPlatformInfo().then(({ os }) => (document.getElementById('screen').hidden = os === 'android'));
 
 function fill(s) {
   for (const field of form.elements) {

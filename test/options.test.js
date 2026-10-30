@@ -64,6 +64,7 @@ function tab(store, { privateWindows }) {
     // breaks when one is missing
     ...NUMBERS.map((name) => new El('input', { type: 'number', name })),
     new El('p', { id: 'limits-note' }),
+    new El('section', { id: 'screen' }),
     new El('input', { type: 'checkbox', name: 'chime' }),
     new El('div', { id: 'sites' }),
     new El('output'),
@@ -86,6 +87,7 @@ function tab(store, { privateWindows }) {
     browser: {
       storage: { local: store.local, onChanged: { addListener: (f) => store.listeners.push(f) } },
       extension: { getBackgroundPage: () => ({ theme: {} }), isAllowedIncognitoAccess: async () => privateWindows },
+      runtime: { getPlatformInfo: async () => ({ os: 'win' }) },
     },
     Date: class extends Date { static now() { return clock.now; } },
   });
