@@ -183,7 +183,8 @@ html[data-dis2tract-blocked] body {
 #dis2tract p.d2t-idea { max-width: none; margin: 0; font-size: 17px; color: var(--d2t-fg); }
 #dis2tract p.d2t-idea a { color: inherit; text-decoration: underline 1px color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
 #dis2tract .d2t-unlock p.d2t-small { margin: 10px auto 0; font-size: 13px; }
-/* the answer to a question: the one thing to do now, in a card of its own, at least two lines tall */
+/* the answer to a question: the one thing to do now, in a card of its own. its slot is reserved, two lines tall:
+   it stays empty until storage answers, so filling it in moves nothing above */
 #dis2tract .d2t-answer {
   display: flex;
   flex-direction: column;
@@ -308,3 +309,26 @@ html[data-dis2tract-blocked] body {
   #dis2tract .d2t-sheet { animation-name: dis2tract-fade; } /* fades in and out, no slide */
   #dis2tract .d2t-layer[data-closing] .d2t-sheet { animation-name: dis2tract-fade-out; }
 }
+
+/* the unlock's time left, a pill over the page it lets through (timeLeft() in content.js). its own element, apart
+   from the block screen, with fixed colors that read on any site, and red for the last 30 s. small and at the very
+   top, where it covers the least of a site's own bar; taps go through it */
+#dis2tract-left {
+  all: initial;
+  position: fixed !important;
+  top: max(2px, env(safe-area-inset-top, 0px));
+  left: 50%;
+  z-index: 2147483647 !important;
+  display: block !important;
+  transform: translateX(-50%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  font: 600 12px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#dis2tract-left[data-ending] { background: #d70015; } /* 5.4:1 against the white text */

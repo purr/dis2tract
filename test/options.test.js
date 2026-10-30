@@ -7,6 +7,7 @@ const vm = require('node:vm');
 
 const NOON = new Date(2026, 9, 27, 12, 0).getTime();
 const MIN = 60_000;
+const NUMBERS = [...fs.readFileSync(path.join(__dirname, '../options/options.html'), 'utf8').matchAll(/type="number" name="(\w+)"/g)].map((m) => m[1]);
 const settle = async () => {
   for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
 };
@@ -59,7 +60,9 @@ function tab(store, { privateWindows }) {
     new El('div', { id: 'private', hidden: true }),
     pending,
     new El('textarea', { name: 'note' }),
-    ...['scrollScreens', 'chainLimit', 'sentenceWords'].map((name) => new El('input', { type: 'number', name })),
+    // the number fields options.html really has: options.js sets min and max on one per LIMITS key, and the page
+    // breaks when one is missing
+    ...NUMBERS.map((name) => new El('input', { type: 'number', name })),
     new El('p', { id: 'limits-note' }),
     new El('input', { type: 'checkbox', name: 'chime' }),
     new El('div', { id: 'sites' }),

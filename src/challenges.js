@@ -14,9 +14,14 @@ var WORDS = (
 
 const randomInt = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
 const randomWords = (n) => Array.from({ length: n }, () => WORDS[randomInt(0, WORDS.length - 1)]);
-// case, punctuation and extra spaces never fail an answer: phone keyboards add them on their own
-const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean).join(' ');
-const asNumber = (s) => (/^\s*\d[\d\s.,']*$/.test(s) ? Number(s.replace(/\D/g, '')) : NaN);
+// case, punctuation, extra spaces and full-width forms never fail an answer: phone keyboards add the first three,
+// and a japanese or chinese ime types ２３６ and ａｐｐｌｅ (nfkc folds them; macos and linux ignore inputmode=numeric).
+// arabic-indic and persian digits, which nfkc keeps, are mapped by hand
+const normalize = (s) => s.normalize('NFKC').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean).join(' ');
+const asNumber = (s) => {
+  const t = s.normalize('NFKC').replace(/[٠-٩۰-۹]/g, (d) => d.charCodeAt(0) % 16);
+  return /^\s*\d[\d\s.,']*$/.test(t) ? Number(t.replace(/\D/g, '')) : NaN;
+};
 
 var CHALLENGES = [
   function retype(words) {

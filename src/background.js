@@ -92,7 +92,12 @@ browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPag
 browser.runtime.onMessage.addListener((message) => {
   if (message === 'chime') new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
   else if (message === 'use') countUse();
+  else if (message?.trail) privateTrails.set(message.trail, message.value);
+  else if (message?.getTrail) return Promise.resolve(privateTrails.get(message.getTrail) ?? null);
 });
+// a private window's run of items (trail:<site> in content.js) lives here, in memory only: storage.local is on disk
+// for good, and what was watched in a private window must not outlive it
+const privateTrails = new Map();
 // time on the social sites per day. every tab with one of their pages in use and no block screen up says so on
 // each look (track() in content.js), and the time between two notes from any tabs counts when they are under 2 s
 // apart: two windows in use side by side count once, and a sleeping machine or a clock set back adds nothing.

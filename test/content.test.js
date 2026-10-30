@@ -48,6 +48,13 @@ class El {
       }
     }
   }
+  prepend(...xs) {
+    for (const x of xs.reverse()) {
+      x.remove();
+      x.parentNode = this;
+      this.children.unshift(x);
+    }
+  }
   remove() {
     if (!this.parentNode) return;
     this.parentNode.children.splice(this.parentNode.children.indexOf(this), 1);
@@ -85,40 +92,73 @@ class El {
     }
     return null;
   }
-  querySelector(tag) { return this.find((n) => n.tagName === tag.toUpperCase()); }
-  focus() {}
+  // the selectors the scripts use: a tag, .class or tag[attr=value]
+  matches(sel) {
+    const [, tag, cls, attr, value] = /^(\w*)(?:\.([\w-]+))?(?:\[([\w-]+)=([\w-]+)\])?$/.exec(sel);
+    return (!tag || this.tagName === tag.toUpperCase()) && (!cls || (this.getAttribute('class') ?? '').split(' ').includes(cls))
+      && (!attr || this.getAttribute(attr) === value);
+  }
+  querySelector(sel) { return this.find((n) => n.matches(sel)); }
+  querySelectorAll(sel) {
+    const all = [];
+    const walk = (n) => {
+      for (const c of n.children) {
+        all.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return sel === '*' ? all : all.filter((n) => sel.split(',').some((s) => n.matches(s.trim())));
+  }
+  // focus moves, and the window's capturing listeners hear of it first, as in a browser
+  focus() {
+    this.doc.activeElement = this;
+    let stopped = false;
+    const e = { target: this, stopImmediatePropagation() { stopped = true; } };
+    for (const f of this.doc.defaultView?.listeners.focusin ?? []) if (!stopped) f(e);
+  }
   set textContent(v) { this.children = []; this.text = String(v); }
   get textContent() { return this.text + this.children.map((c) => c.textContent).join(''); }
 }
 
-// setup(doc, root) runs before the scripts, to put the page in a starting state
+// setup(doc, root, browser) runs before the scripts, to put the page in a starting state. doc.navigationType is how
+// the page was loaded (performance navigation timing), 'navigate' unless set there
 // session: a Map standing in for the tab's sessionStorage; without one the page has none, as when a site refuses it
 function boot(url, stored = {}, setup = () => {}, session = null) {
   const clock = { now: NOON };
   const data = structuredClone(stored);
   const changeListeners = [];
   const messageListeners = []; // what background.js sends this tab
-  const doc = { listeners: {}, body: null, activeElement: null, cookie: '', visibilityState: 'visible' };
+  const doc = { listeners: {}, body: null, activeElement: null, cookie: '', visibilityState: 'visible', readyState: 'loading', referrer: '' };
   const root = new El('html', doc);
   let stops = 0;
   const win = { listeners: {}, stop: () => { stops += 1; } };
   Object.assign(doc, {
+    defaultView: win,
     documentElement: root,
     scrollingElement: root,
     createElement: (t) => new El(t, doc),
     getElementById: (id) => root.find((n) => n.getAttribute('id') === id),
     querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelectorAll: (sel) => root.querySelectorAll(sel),
     addEventListener: (t, f) => (doc.listeners[t] ??= []).push(f),
   });
   win.addEventListener = (t, f) => (win.listeners[t] ??= []).push(f);
-  // the page's own media prototype, which the content script wraps through firefox's exportFunction
+  // the browser's own methods: what the page's prototypes hold until the content script wraps them through firefox's
+  // exportFunction, and what the content script always reads through its xray view of them
+  const native = {
+    play() {
+      if (typeof this?.pause !== 'function') throw new TypeError('\'play\' called on an object that does not implement interface HTMLMediaElement.');
+      this.paused = false;
+      return Promise.resolve();
+    },
+    focus() { doc.activeElement = this; },
+  };
   win.wrappedJSObject = {
     Promise,
-    HTMLMediaElement: { prototype: { play() { this.paused = false; return Promise.resolve(); } } },
-    HTMLElement: { prototype: { focus() { doc.activeElement = this; } } },
+    HTMLMediaElement: { prototype: { play: native.play } },
+    HTMLElement: { prototype: { focus: native.focus } },
   };
-  setup(doc, root);
   const loc = new URL(url);
   const assigned = [];
   const reloads = [];
@@ -151,6 +191,18 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
       for (const f of changeListeners) f(changes, 'local');
     },
   };
+  const browser = {
+    extension: { inIncognitoContext: false },
+    storage: { local: store, onChanged: { addListener: (f) => changeListeners.push(f) } },
+    runtime: {
+      sendMessage: async (message) => {
+        if (message === 'chime') chimes.push(clock.now);
+        else if (message === 'use') uses.push(clock.now);
+      },
+      onMessage: { addListener: (f) => messageListeners.push(f) },
+    },
+  };
+  setup(doc, root, browser);
   const ctx = vm.createContext({
     URL,
     console,
@@ -160,6 +212,9 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
     window: win,
     queueMicrotask,
     exportFunction: (fn, target, { defineAs }) => { target[defineAs] = fn; },
+    HTMLMediaElement: { prototype: { play: native.play } },
+    HTMLElement: { prototype: { focus: native.focus } },
+    performance: { getEntriesByType: (type) => (type === 'navigation' ? [{ type: doc.navigationType ?? 'navigate' }] : []) },
     ...(session && {
       sessionStorage: { getItem: (k) => session.get(k) ?? null, setItem: (k, v) => session.set(k, String(v)), removeItem: (k) => session.delete(k) },
     }),
@@ -167,16 +222,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
     setInterval: (f, ms) => timers.push({ f, ms }),
     clearInterval: (id) => { timers[id - 1] = null; },
     Date: class extends Date { static now() { return clock.now; } },
-    browser: {
-      storage: { local: store, onChanged: { addListener: (f) => changeListeners.push(f) } },
-      runtime: {
-        sendMessage: async (message) => {
-          if (message === 'chime') chimes.push(clock.now);
-          else if (message === 'use') uses.push(clock.now);
-        },
-        onMessage: { addListener: (f) => messageListeners.push(f) },
-      },
-    },
+    browser,
   });
   // the first of every random pick: challenge 0 (retype) made of the first word, suggestion 0, and so on
   vm.runInContext('Math.random = () => 0', ctx);
@@ -235,11 +281,12 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
     go: (v) => {
       location.href = v;
     },
-    // a plain left click on a link; returns whether the page's own handlers were kept from it
-    click(href, extra = {}) {
+    // a plain left click on a link; returns whether the page's own handlers were kept from it. `link` changes the
+    // link, `path` is what the event passed through on its way down, the link first
+    click(href, extra = {}, link = {}) {
       let stopped = false;
-      const link = { href: new URL(href, location.href).href, target: '' };
-      const e = { button: 0, target: { closest: () => link }, preventDefault() { stopped = true; }, stopImmediatePropagation() {}, ...extra };
+      const a = { localName: 'a', href: new URL(href, location.href).href, target: '', ...link };
+      const e = { button: 0, detail: 1, composedPath: () => [a, root, doc, win], preventDefault() { stopped = true; }, stopImmediatePropagation() {}, ...extra };
       for (const f of win.listeners.click ?? []) f(e);
       return stopped;
     },
@@ -247,9 +294,11 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
       location.href = v;
       t.tick();
     },
+    // firefox sets the address first, then fires popstate
     back(v) {
+      location.href = v;
       for (const f of win.listeners.popstate) f({});
-      t.nav(v);
+      t.tick();
     },
     scroll(top) {
       root.scrollTop = top;
@@ -341,9 +390,50 @@ test('a reload or new tab within a minute keeps the shorts tab blocked and the c
   const again = boot('https://www.youtube.com/watch?v=e', { 'trail:youtube': c.data['trail:youtube'] });
   await settle();
   assert.equal(again.reason(), 'chain', 'a reload is not a fresh chain');
+  assert.equal(again.overlay().getAttribute('data-enter'), null, 'a page load, not a block while browsing: no fade');
+  assert.equal(again.chimes.length, 0, 'and no bell');
   const later = boot('https://www.youtube.com/watch?v=e', { 'trail:youtube': { ...c.data['trail:youtube'], at: NOON - 2 * MIN } });
   await settle();
   assert.equal(later.reason(), null, 'after a minute the run is over');
+});
+
+test('a link from another site starts a new run; a reload or a link from the same site does not', async () => {
+  const c = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  for (const p of 'abcd') c.nav(`https://www.reddit.com/r/aww/comments/${p}/x/`);
+  const trail = { 'trail:reddit': c.data['trail:reddit'] };
+  const from = (referrer, navigationType = 'navigate') => (doc) => Object.assign(doc, { referrer, navigationType });
+  const google = boot('https://www.reddit.com/r/aww/comments/e/x/', trail, from('https://www.google.com/'));
+  await settle();
+  assert.equal(google.reason(), null, 'the 5th thread in a row, opened from search results');
+  const reloaded = boot('https://www.reddit.com/r/aww/comments/e/x/', trail, from('https://www.google.com/', 'reload'));
+  await settle();
+  assert.equal(reloaded.reason(), 'chain', 'firefox sends the first referrer again on a reload');
+  const old = boot('https://www.reddit.com/r/aww/comments/e/x/', trail, from('https://old.reddit.com/r/aww/'));
+  await settle();
+  assert.equal(old.reason(), 'chain', 'another host of the same site');
+});
+
+test('a private window stores none of its browsing; its run of items stays in background.js memory', async () => {
+  const kept = new Map(); // background.js's memory
+  const incognito = (doc, root, browser) => {
+    browser.extension.inIncognitoContext = true;
+    const send = browser.runtime.sendMessage;
+    browser.runtime.sendMessage = async (message) => {
+      if (message?.trail) kept.set(message.trail, structuredClone(message.value));
+      else if (message?.getTrail) return kept.get(message.getTrail) ?? null;
+      else return send(message);
+    };
+  };
+  const t = boot('https://www.youtube.com/results?search_query=x', { recent: [{ site: 'x', at: NOON - MIN }] }, incognito);
+  await settle();
+  for (const v of 'abcde') t.nav(`https://www.youtube.com/watch?v=${v}`);
+  assert.equal(t.reason(), 'chain');
+  assert.equal(t.data['trail:youtube'], undefined, 'no watched ids on disk');
+  assert.deepEqual(t.data.recent, [{ site: 'x', at: NOON - MIN }], 'and no visit for the mirror of other windows');
+  const again = boot('https://www.youtube.com/watch?v=e', {}, incognito);
+  await settle();
+  assert.equal(again.reason(), 'chain', 'a reload in the private window is still no way out');
 });
 
 test('a slow feed-to-item swap is still the feed; back/forward is not', async () => {
@@ -362,6 +452,41 @@ test('a slow feed-to-item swap is still the feed; back/forward is not', async ()
   y.clock.now += 500;
   y.back('https://www.youtube.com/watch?v=a');
   assert.equal(y.reason(), null, 'back from an accidental home click');
+});
+
+test('back onto a feed is judged before the feed jumps on to an item; a hash change is no back/forward', async () => {
+  for (const [start, feed, item, next] of [
+    ['https://www.instagram.com/natgeo/', 'https://www.instagram.com/reels/', 'https://www.instagram.com/reels/A/', 'https://www.instagram.com/reels/B/'],
+    ['https://www.youtube.com/@someone', 'https://www.youtube.com/shorts', 'https://www.youtube.com/shorts/A', 'https://www.youtube.com/shorts/B'],
+  ]) {
+    const t = boot(start);
+    await settle();
+    t.nav(feed);
+    t.nav(item);
+    assert.equal(t.reason(), 'feed');
+    t.clock.now += 5000;
+    t.go(feed); // back: firefox sets the address, then fires popstate
+    for (const f of t.win.listeners.popstate) f({});
+    t.go(next); // the site's own popstate handler jumps on, before the next look
+    t.passed(feed); // and background.js's report comes after it
+    t.clock.now += 400;
+    t.tick();
+    assert.equal(t.reason(), 'feed', next);
+  }
+  const h = boot('https://www.instagram.com/natgeo/');
+  await settle();
+  const anchor = (url) => {
+    h.go(url); // an in-page anchor fires popstate too
+    for (const f of h.win.listeners.popstate) f({});
+    h.tick();
+  };
+  anchor('https://www.instagram.com/natgeo/#comments');
+  h.clock.now += 60_000;
+  h.go('https://www.instagram.com/reels/C0de/');
+  h.passed('https://www.instagram.com/reels/');
+  assert.equal(h.reason(), 'feed', 'the next feed jump is still carried');
+  anchor('https://www.instagram.com/reels/C0de/#comments');
+  assert.equal(h.reason(), 'feed', 'and an anchor on the carried item does not let it out');
 });
 
 test('a settings write keeps the feed carry and the scroll budget', async () => {
@@ -427,7 +552,10 @@ test('unlock: a pause, a challenge with no pasting, then the site opens for its 
   t.seconds(1);
   const input = t.find((n) => n.getAttribute('placeholder') === 'your answer');
   assert.equal(input.tagName, 'TEXTAREA', 'a sentence wraps, so typos stay visible');
-  const shown = t.find((n) => n.getAttribute('class') === 'd2t-sentence').textContent;
+  const sentence = t.find((n) => n.getAttribute('class') === 'd2t-sentence');
+  assert.equal(sentence.getAttribute('translate'), 'no', 'a page translator would swap the very words to type');
+  assert.equal(input.getAttribute('aria-describedby'), sentence.getAttribute('id'), 'a screen reader reads them with the field');
+  const shown = sentence.textContent;
   let refused = false;
   input.fire('paste', { preventDefault: () => { refused = true; } });
   assert.ok(refused, 'paste is refused');
@@ -474,6 +602,37 @@ test('unlock minutes run only on screen: time left waits for a later visit, and 
   const replaced = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON - 5 * MIN }, { site: 'x', at: NOON - MIN }] });
   await settle();
   assert.equal(replaced.reason(), 'feed', 'a newer unlock elsewhere ends it');
+  const cut = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  cut.play();
+  await cut.run(3000); // spent here, not saved yet
+  await cut.setStorage({ unlocks: [{ site: 'tiktok', at: NOON }, { site: 'x', at: cut.clock.now }] });
+  await settle();
+  assert.equal(cut.reason(), 'feed');
+  assert.equal(cut.data.spent, undefined, 'the time spent here is not charged to the newer unlock on x');
+});
+
+test('an unlock shows its time left over the page, in seconds near the end, and the block follows it', async () => {
+  const pill = (t) => t.doc.documentElement.children.find((c) => c.getAttribute('id') === 'dis2tract-left') ?? null;
+  const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  t.play();
+  t.tick();
+  assert.equal(pill(t).textContent, '3 min left');
+  assert.equal(pill(t).getAttribute('data-ending'), null);
+  assert.equal(t.overlay(), null, 'not the block screen: the page plays on');
+  await t.run(160_000);
+  assert.match(pill(t).textContent, /^\d+ s left$/);
+  assert.equal(pill(t).getAttribute('data-ending'), '', 'the last 30 s stand out');
+  await t.run(30_000);
+  assert.equal(t.reason(), 'feed');
+  assert.equal(pill(t), null);
+  const at = (h, m) => new Date(2026, 9, 27, h, m).getTime();
+  const late = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: at(22, 58) }] });
+  late.clock.now = at(22, 59);
+  await settle();
+  late.tick();
+  assert.equal(pill(late).textContent, '1 min left', 'bedtime ends it before its feed time runs out');
 });
 
 test('an unused unlock from earlier does not open the feed: time left lasts until the next unlock could start', async () => {
@@ -507,13 +666,37 @@ test('unlock minutes stop while nothing plays and nobody touches the page', asyn
   assert.ok(t.data.spent.ms - paused - read > 9000, 'scrolling itself counts as use');
 });
 
+test('time spent just before leaving is saved, though firefox never answers a read on the way out', async () => {
+  const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  t.play();
+  await t.run(3000); // under the 5 s between saves
+  t.ctx.browser.storage.local.get = () => new Promise(() => {}); // a page gone or in the back-forward cache
+  for (const f of t.win.listeners.pagehide) f({});
+  await settle();
+  assert.ok(t.data.spent?.ms >= 2000, `${t.data.spent?.ms} ms`);
+});
+
 test('a jump into a feed blocks at once: a link click becomes a stopped full load, a router change is judged when reported', async () => {
   const t = boot('https://www.youtube.com/watch?v=abc');
   await settle();
   assert.equal(t.click('/'), true, 'the site never gets the click');
   assert.deepEqual(t.assigned, ['https://www.youtube.com/'], 'a full load instead, which stops at its start');
+  assert.equal(t.chimes.length, 1, 'the bell goes with the click: the full load only paints and redraws');
   assert.equal(t.click('/@someone'), false, 'other links work as usual');
   assert.equal(t.click('/', { ctrlKey: true }), false, 'a new tab loads, and stops, by itself');
+  assert.equal(t.click('/', {}, { target: '_blank' }), false, 'so does a link that opens one');
+  assert.equal(t.click('/', {}, { target: 'player' }), false, 'or a named window');
+  assert.equal(t.click('/', { detail: 2 }), true, 'a double click loads it once more');
+  assert.equal(t.chimes.length, 1, 'with no second bell');
+  // reddit draws home and popular in its left nav inside a web component: the click reaches the window retargeted
+  // to the component, and only the composed path still holds the link
+  const r = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  const home = { localName: 'a', href: 'https://www.reddit.com/?feed=home', target: '' };
+  assert.equal(r.click('/?feed=home', { composedPath: () => [{ localName: 'span' }, home, { localName: 'left-nav-top-section' }] }), true);
+  assert.deepEqual(r.assigned, ['https://www.reddit.com/?feed=home']);
+  assert.equal(r.click('/', { composedPath: () => [{ localName: 'a', href: { baseVal: '/' } }] }), false, 'an svg link is no page link');
   t.go('https://www.youtube.com/'); // the router got there some other way
   assert.equal(t.reason(), null);
   t.passed('https://www.youtube.com/');
@@ -553,6 +736,19 @@ test('a new instance of the script (an update or reload) wraps the page\'s own p
   proto.play.call(video);
   assert.equal(video.paused, false);
   assert.equal(proto.play.dis2tractPage, page);
+  // 0.7.0 and older left their wrappers without the mark: dead after the update, they look like the page's own
+  const update = boot('https://www.youtube.com/@someone', {}, (doc) => {
+    const dead = () => { throw new TypeError('can\'t access dead object'); };
+    doc.defaultView.wrappedJSObject.HTMLMediaElement.prototype.play = dead;
+    doc.defaultView.wrappedJSObject.HTMLElement.prototype.focus = dead;
+  });
+  await settle();
+  const clip = { paused: true, ended: false, pause() { this.paused = true; } };
+  update.win.wrappedJSObject.HTMLMediaElement.prototype.play.call(clip);
+  assert.equal(clip.paused, false, 'firefox\'s own play() stands in');
+  const field = new El('input', update.doc);
+  update.win.wrappedJSObject.HTMLElement.prototype.focus.call(field);
+  assert.equal(update.doc.activeElement, field, 'and its own focus()');
 });
 
 test('a block that appears while browsing fades in and chimes; the first paint and a redraw do neither', async () => {
@@ -583,6 +779,40 @@ test('a block that appears while browsing fades in and chimes; the first paint a
   assert.equal(hidden.chimes.length, 0, 'a tab out of sight stays quiet');
 });
 
+test('a cooldown ending under the open block screen keeps the search being typed; so does a redraw', async () => {
+  const t = boot('https://www.youtube.com/', { unlocks: [{ site: 'x', at: NOON - MIN }] });
+  await settle();
+  assert.match(t.unlockText(), /^next unlock at /);
+  const search = () => t.find((n) => n.getAttribute('type') === 'search');
+  const roast = () => t.find((n) => n.getAttribute('class') === 'd2t-answer');
+  const q = search();
+  const question = roast();
+  q.value = 'lo-fi';
+  q.focus();
+  t.clock.now = NOON + 22 * MIN;
+  t.tick();
+  assert.match(t.unlockText(), /^unlock youtube/, 'the cooldown is over');
+  assert.equal(search(), q, 'the same field: its text, focus and phone keyboard stay');
+  assert.equal(t.doc.activeElement, q);
+  assert.equal(roast(), question, 'and the same question');
+  await t.setStorage({ settings: { version: 2, note: 'hi' } }); // a redraw: another tab saved the settings
+  await settle();
+  assert.notEqual(search(), q);
+  assert.equal(search().value, 'lo-fi');
+  assert.equal(t.doc.activeElement, search());
+});
+
+test('a move from one blocked feed to another under the block screen names the new one', async () => {
+  const line = (t) => t.find((n) => n.getAttribute('class') === 'd2t-sub').children[0].textContent;
+  const t = boot('https://www.youtube.com/');
+  await settle();
+  assert.equal(line(t), 'endless feed: youtube home.');
+  t.clock.now += MIN;
+  t.back('https://www.youtube.com/gaming');
+  assert.equal(line(t), 'endless feed: youtube gaming.');
+  assert.equal(t.data.recent.at(-1).at, NOON + MIN, 'and notes the attempt there');
+});
+
 test('a wrong answer in another tab holds a challenge open here too', async () => {
   const t = boot('https://x.com/home');
   await settle();
@@ -600,6 +830,15 @@ test('feed time saved by another tab does not redraw an open unlock sheet', asyn
   t.button('unlock x').fire('click');
   await t.setStorage({ spent: { at: NOON - MIN, ms: 5000 } });
   assert.ok(t.sheet(), 'the sheet stays open');
+});
+
+test('a page back from the back-forward cache catches up on what changed while it was there', async () => {
+  const t = boot('https://bsky.app/');
+  await settle();
+  assert.equal(t.reason(), 'feed');
+  t.data.unlocks = [{ site: 'bluesky', at: NOON }]; // an unlock in another tab: firefox drops the event for a cached page
+  for (const f of t.win.listeners.pageshow) await f({ persisted: true });
+  assert.equal(t.reason(), null);
 });
 
 test('a wrong number: the right answer, a wait, then a new challenge in the same sheet', async () => {
@@ -627,6 +866,17 @@ test('a wrong number: the right answer, a wait, then a new challenge in the same
   assert.ok(t.sheet().querySelector('input'), 'a new challenge');
 });
 
+test('full-width digits from a japanese or chinese ime count as the number they show', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  vm.runInContext('Math.random = () => 0.5', t.ctx); // arithmetic: 31 × 6 + 50
+  const { input, form } = startChallenge(t, 'x');
+  type(input, '２３６');
+  form.fire('submit');
+  await settle();
+  assert.equal(t.reason(), null);
+});
+
 test('only text typed one character at a time counts: pastes in any form are undone or ignored', async () => {
   const t = boot('https://x.com/home');
   await settle();
@@ -651,6 +901,23 @@ test('only text typed one character at a time counts: pastes in any form are und
   await settle();
   assert.equal(t.reason(), 'feed');
   assert.equal(t.data.unlocks, undefined);
+});
+
+test('a keyboard edit that deletes and then inserts (android\'s double-space period) keeps the space', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  const { input } = startChallenge(t, 'x');
+  type(input, 'apple ');
+  input.value = 'apple'; // the second space: the keyboard takes the first one out
+  input.fire('input', { isTrusted: true });
+  input.value = 'apple. '; // and puts '. ' in its place
+  input.fire('input', { isTrusted: true });
+  assert.equal(input.value, 'apple. ');
+  input.value = 'apple.'; // a delete, then a paste
+  input.fire('input', { isTrusted: true });
+  input.value = 'apple.river stone';
+  input.fire('input', { isTrusted: true });
+  assert.equal(input.value, 'apple.', 'a paste after a delete is still undone');
 });
 
 test('enter on a typo in the sentence is a wrong answer too, and never says which word', async () => {
@@ -680,6 +947,12 @@ test('never mind goes back to the unlock button without a penalty', async () => 
   const layer = t.sheet().parentNode;
   layer.fire('click', { target: layer });
   assert.equal(t.sheet(), null, 'a tap outside the sheet closes it too');
+  t.button('unlock x').fire('click');
+  const under = t.overlay().children.filter((c) => c !== t.sheet().parentNode);
+  assert.ok(under.length && under.every((c) => c.hasAttribute('inert')), 'shift+tab cannot reach the covered unlock button');
+  for (const f of t.win.listeners.keydown) f({ type: 'keydown', key: 'Escape', isComposing: false, stopImmediatePropagation() {} });
+  assert.equal(t.sheet(), null, 'escape closes it, like a dialog');
+  assert.ok(under.every((c) => !c.hasAttribute('inert')));
 });
 
 test('bedtime: from 23:00 to 5:00 no unlock starts, and one still running ends', async () => {
@@ -698,6 +971,30 @@ test('bedtime: from 23:00 to 5:00 no unlock starts, and one still running ends',
   u.tick();
   assert.equal(u.reason(), 'feed');
   assert.equal(u.button('+1 min'), null, 'no extra minute at bedtime either');
+  const early = boot('https://x.com/home', { settings: { version: 2, bedtimeFrom: 21 } });
+  early.clock.now = at(21, 30);
+  await settle();
+  early.tick();
+  assert.match(early.unlockText(), /^bedtime: no unlocks until /, 'bedtime made earlier in the settings');
+});
+
+test('a cooldown that ends at bedtime promises the morning, and the screen turns to bedtime at 23:00', async () => {
+  const at = (h, m) => new Date(2026, 9, 27, h, m).getTime();
+  const t = boot('https://www.youtube.com/', { unlocks: [{ site: 'x', at: at(22, 42) }] });
+  t.clock.now = at(22, 50);
+  await settle();
+  t.tick();
+  const night = boot('https://www.youtube.com/');
+  night.clock.now = at(23, 30);
+  await settle();
+  night.tick();
+  assert.match(night.unlockText(), /^bedtime: no unlocks until /);
+  assert.equal(t.unlockText(), night.unlockText(), 'the morning, not the 23:05 the cooldown alone gives');
+  const roast = () => t.find((n) => n.getAttribute('class') === 'd2t-answer').textContent;
+  assert.ok(!roast().startsWith(t.ctx.LATE[0]));
+  t.clock.now = at(23, 0);
+  t.tick();
+  assert.ok(roast().startsWith(t.ctx.LATE[0]), 'the open screen turns to the late-night question');
 });
 
 test('unlocks: spaced across all sites, a daily cap, and the old storage shape is ignored', async () => {
@@ -708,6 +1005,7 @@ test('unlocks: spaced across all sites, a daily cap, and the old storage shape i
   t.clock.now = NOON - MIN + (minutes + cooldownMinutes) * MIN;
   t.tick();
   assert.match(t.unlockText(), /^unlock youtube for 3 min/, 'the button returns when the cooldown ends');
+  assert.match(t.unlockText(), /9 of 10 unlocks left today\.$/, 'and what is left of the day\'s');
   const spent = boot('https://www.youtube.com/', { unlocks: Array.from({ length: perDay }, (_, i) => ({ site: 'tiktok', at: NOON - (i + 1) * MIN })) });
   await settle();
   assert.match(spent.unlockText(), /^no unlocks left today/);
@@ -732,13 +1030,32 @@ test('one extra minute right after an unlock ends, paid for with a longer cooldo
   // the extra minute ran out at about NOON + 1 min; the next unlock waits the longer cooldown from there
   t.clock.now = NOON + 30 * MIN;
   t.tick();
-  assert.match(t.unlockText(), /^next unlock at /);
+  assert.match(t.unlockText(), /^next unlock at .+\. 10 a day, 30 min apart\.$/, 'the wait it really is');
   t.clock.now = NOON + 32 * MIN;
   t.tick();
   assert.ok(t.button('unlock tiktok'));
   const late = boot('https://www.tiktok.com/foryou', ran(NOON - 3 * MIN));
   await settle();
   assert.equal(late.button('+1 min'), null, 'not once the grace window has passed');
+  // an unlock used in pieces, run out 20 min after it began: an extra minute left half unused still waits 30 min
+  // from when it was taken, not from the unlock's start
+  const pieces = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON - 20 * MIN, doneAt: NOON - 30_000 }], spent: { at: NOON - 20 * MIN, ms: 3 * MIN } });
+  await settle();
+  pieces.touch();
+  pieces.button('+1 min').fire('click');
+  await settle();
+  pieces.play();
+  await pieces.run(30_000);
+  pieces.nav('https://www.tiktok.com/@someone');
+  await settle();
+  const x = boot('https://x.com/home', pieces.data);
+  x.clock.now = NOON + 30 * MIN;
+  await settle();
+  x.tick();
+  assert.match(x.unlockText(), /^next unlock at /);
+  x.clock.now = NOON + 31 * MIN + 1000;
+  x.tick();
+  assert.ok(x.button('unlock x'));
 });
 
 test('the mirror names the other apps the user went for just before, and only then', async () => {
@@ -825,6 +1142,52 @@ test('the page cannot pull focus out of the answer field while blocked', async (
   assert.equal(free.doc.activeElement, other, 'on an allowed page the page focuses what it wants');
 });
 
+test('tab focus stays in the block screen, and the page hears of none of it', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  const { input } = startChallenge(t, 'x');
+  const heard = [];
+  t.win.addEventListener('focusin', (e) => heard.push(e.target)); // a site's own focus trap, as on reddit
+  new El('button', t.doc).focus(); // tabbing past the end lands on the page
+  assert.equal(t.doc.activeElement, input, 'back in the answer field, not on the dialog');
+  input.focus(); // a tap on the field
+  assert.deepEqual(heard, [], 'a trap that blurs what took focus would close the phone keyboard on every tap');
+  const free = boot('https://x.com/jack');
+  await settle();
+  const seen = [];
+  free.win.addEventListener('focusin', (e) => seen.push(e.target));
+  const link = new El('a', free.doc);
+  link.focus();
+  assert.deepEqual(seen, [link], 'an allowed page hears its focus as usual');
+});
+
+test('keys never reach the page behind the block screen; on an allowed page they do', async () => {
+  const key = (t) => {
+    let stopped = false;
+    for (const f of t.win.listeners.keydown) f({ type: 'keydown', key: 'k', stopImmediatePropagation() { stopped = true; } });
+    return stopped;
+  };
+  const t = boot('https://www.youtube.com/');
+  await settle();
+  assert.ok(key(t), 'youtube\'s k (play) and j (rewind) would act behind it');
+  const free = boot('https://www.youtube.com/@someone');
+  await settle();
+  assert.ok(!key(free));
+});
+
+test('the block screen moves back to the end of the page, never while it holds focus', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  startChallenge(t, 'x');
+  const body = new El('body', t.doc);
+  t.doc.documentElement.append(body); // <body> comes after the block screen, and would paint above it
+  t.tick();
+  assert.equal(t.overlay().nextElementSibling, body, 'moving it would blur the field and close the phone keyboard');
+  t.doc.activeElement = null;
+  t.tick();
+  assert.equal(t.overlay().nextElementSibling, null, 'moved once nothing in it has focus');
+});
+
 test('music from a player in no document is stopped while blocked', async () => {
   const media = (t) => t.win.wrappedJSObject.HTMLMediaElement.prototype;
   const player = () => ({ paused: true, pause() { this.paused = true; } });
@@ -838,8 +1201,30 @@ test('music from a player in no document is stopped while blocked', async () => 
   const earlier = player();
   media(t).play.call(earlier);
   assert.equal(earlier.paused, false, 'plays on an allowed page');
+  assert.throws(() => media(t).play.call({}), TypeError, 'a page probing play() with something that is no player');
   t.nav('https://www.tiktok.com/foryou');
-  assert.equal(earlier.paused, true, 'paused the moment the block screen comes up');
+  assert.equal(earlier.paused, true, 'paused the moment the block screen comes up, the probe not kept as playing');
+});
+
+test('players in the page and in shadow roots (reddit\'s) are paused by the block, and again when they start', async () => {
+  const t = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  const video = (doc) => Object.assign(new El('video', doc), { paused: false, pause() { this.paused = true; } });
+  const page = video(t.doc);
+  const inner = video(t.doc);
+  const host = new El('shreddit-player', t.doc);
+  host.openOrClosedShadowRoot = new El('div', t.doc); // stands in for its shadow root
+  host.openOrClosedShadowRoot.append(inner);
+  t.doc.documentElement.append(page, host);
+  t.scroll(0);
+  for (let top = 500; top <= 12_000; top += 500) t.scroll(top);
+  assert.equal(t.reason(), 'scroll');
+  assert.ok(page.paused && inner.paused);
+  page.paused = false;
+  for (const f of t.doc.listeners.play) f({ target: page });
+  inner.paused = false;
+  host.openOrClosedShadowRoot.fire('play', { target: inner }); // a play event never leaves a shadow root
+  assert.ok(page.paused && inner.paused, 'started again by the page: paused at once');
 });
 
 test('a loosening change waits, then applies without a reload', async () => {
@@ -861,7 +1246,7 @@ test('a feed switched off in settings lets that feed through, and only that one'
   t.nav('https://www.tiktok.com/foryou');
   assert.equal(t.reason(), 'feed');
   const sub = t.find((n) => n.getAttribute('class') === 'd2t-sub');
-  assert.deepEqual(sub.children.map((s) => s.textContent), ['tiktok for you is an endless feed.', 'go somewhere on purpose.'], 'one sentence per line');
+  assert.deepEqual(sub.children.map((s) => s.textContent), ['endless feed: tiktok for you.', 'go somewhere on purpose.'], 'one sentence per line');
 });
 
 test('youtube watch pages ask for theater mode, unless it is switched off', async () => {
@@ -872,6 +1257,12 @@ test('youtube watch pages ask for theater mode, unless it is switched off', asyn
   await settle();
   off.tick();
   assert.equal(off.doc.cookie, '');
+  // a player the tweak never finds (the site changed): it gives up instead of writing the cookie every 400 ms
+  let writes = 0;
+  const lost = boot('https://www.youtube.com/watch?v=a', {}, (doc) => Object.defineProperty(doc, 'cookie', { set: () => { writes += 1; }, get: () => '' }));
+  await settle();
+  for (let i = 0; i < 40; i++) lost.tick();
+  assert.equal(writes, 26);
 });
 
 test('scroll budget: 12 screens, restore jumps ignored, reset by navigation', async () => {
@@ -885,6 +1276,49 @@ test('scroll budget: 12 screens, restore jumps ignored, reset by navigation', as
   assert.equal(t.reason(), 'scroll');
   t.nav('https://x.com/jack/status/1');
   assert.equal(t.reason(), null);
+});
+
+test('a reload or new tab within a minute keeps what the page used of its scroll budget', async () => {
+  const t = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  t.scroll(0);
+  for (let top = 500; top <= 12_000; top += 500) t.scroll(top);
+  assert.equal(t.reason(), 'scroll');
+  const reloaded = boot('https://www.reddit.com/r/aww/', { 'trail:reddit': t.data['trail:reddit'] });
+  await settle();
+  assert.equal(reloaded.reason(), 'scroll', 'a reload is not a fresh budget');
+  const part = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  part.scroll(0);
+  for (let top = 500; top <= 11_000; top += 500) part.scroll(top);
+  for (const f of part.win.listeners.pagehide) f({}); // reloaded at 11 screens
+  const next = boot('https://www.reddit.com/r/aww/', { 'trail:reddit': part.data['trail:reddit'] });
+  await settle();
+  next.scroll(0);
+  next.scroll(500);
+  assert.equal(next.reason(), null);
+  next.scroll(1000);
+  assert.equal(next.reason(), 'scroll', 'one more screen');
+});
+
+test('the scroll budget is counted in screens: a taller or shorter window does not change what was used', async () => {
+  const t = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  t.ctx.innerHeight = 400;
+  t.scroll(0);
+  for (let top = 400; top <= 4800; top += 400) t.scroll(top);
+  assert.equal(t.reason(), 'scroll');
+  t.ctx.innerHeight = 900; // turned to portrait, or the window maximized
+  t.tick();
+  assert.equal(t.reason(), 'scroll', 'the block holds');
+  const v = boot('https://www.reddit.com/r/aww/');
+  await settle();
+  v.ctx.innerHeight = 900;
+  v.scroll(0);
+  for (let top = 900; top <= 5400; top += 900) v.scroll(top); // half the budget
+  v.ctx.innerHeight = 400; // a video fullscreened in landscape
+  v.tick();
+  assert.equal(v.reason(), null, 'no block halfway through');
 });
 
 test('search results and profiles have no scroll budget', async () => {
@@ -913,12 +1347,54 @@ test('past the scroll limit, keep scrolling gives the page another budget after 
   t.scroll(24_000);
   assert.equal(t.reason(), 'scroll');
   assert.ok(t.button('keep scrolling'), 'and the offer again');
+  assert.equal(t.find((n) => n.tagName === 'H2').textContent, '24 screens deep', 'the budgets used, the extra one too');
+  // the wait is for the page it was asked on: back to another page past its budget keeps this block screen
+  const r = boot('https://www.reddit.com/r/pics/');
+  await settle();
+  const deep = () => {
+    r.scroll(0);
+    for (let top = 500; top <= 12_000; top += 500) r.scroll(top);
+  };
+  deep();
+  r.back('https://www.reddit.com/r/aww/');
+  deep();
+  r.button('keep scrolling').fire('click');
+  r.back('https://www.reddit.com/r/pics/');
+  r.seconds(10);
+  assert.equal(r.reason(), 'scroll', 'no budget for a page that did not wait');
+  assert.equal(r.button('keep scrolling').disabled, false, 'its own offer is open');
+  r.back('https://www.reddit.com/r/aww/');
+  assert.equal(r.reason(), 'scroll', 'and the page that was left gets none either');
+});
+
+test('scrolling during an unlock counts: past the budget the page spends the unlock\'s minutes', async () => {
+  const t = boot('https://www.reddit.com/r/aww/', { unlocks: [{ site: 'reddit', at: NOON }] });
+  await settle();
+  t.scroll(0);
+  for (let top = 500; top <= 20_000; top += 500) t.scroll(top);
+  t.touch();
+  await t.run(10_000);
+  assert.equal(t.reason(), null, 'the unlock lets it through');
+  assert.ok(t.data.spent?.ms > 0, 'and its minutes run');
+  t.play();
+  await t.run(3 * MIN);
+  assert.equal(t.reason(), 'scroll', 'blocked once they run out');
+  assert.equal(t.find((n) => n.tagName === 'H2').textContent, '20 screens deep');
+  t.button('keep scrolling').fire('click');
+  t.seconds(10);
+  assert.equal(t.reason(), null, 'one wait is a full budget from where the page is');
+  for (let top = 20_500; top < 32_000; top += 500) t.scroll(top);
+  assert.equal(t.reason(), null);
+  t.scroll(32_000);
+  assert.equal(t.reason(), 'scroll');
 });
 
 test('a feed opened from scratch stops loading at once; if it may show after all, it loads again, once', async () => {
   const session = new Map();
+  const viewport = (x) => x.doc.documentElement.children.find((c) => c.tagName === 'META' && c.getAttribute('name') === 'viewport') ?? null;
   const t = boot('https://www.youtube.com/', {}, undefined, session);
   assert.equal(t.stops(), 1, 'stopped before the site loads');
+  assert.ok(viewport(t), 'the site\'s own viewport meta never comes: a phone would lay the block screen out 980px wide');
   await settle();
   assert.equal(t.reason(), 'feed');
   assert.deepEqual(t.reloads, [], 'still blocked: nothing more to load');
@@ -926,11 +1402,41 @@ test('a feed opened from scratch stops loading at once; if it may show after all
   assert.deepEqual(t.reloads, ['https://www.youtube.com/'], 'unlocked: the page loads for real');
   const again = boot('https://www.youtube.com/', { unlocks: [{ site: 'youtube', at: NOON }] }, undefined, session);
   assert.equal(again.stops(), 0, 'the marked reload is let through');
+  assert.equal(viewport(again), null, 'with the site\'s own viewport');
   assert.equal(session.size, 0, 'the mark is used once');
   await settle();
   assert.equal(again.reason(), null);
   assert.equal(boot('https://www.youtube.com/@someone', {}, undefined, new Map()).stops(), 0, 'other pages load as usual');
   assert.equal(boot('https://www.youtube.com/').stops(), 0, 'no stop where no mark could undo it');
+});
+
+test('an update or re-enable leaves pages already up alone: no stop, no reload, no block flashed over an open feed', async () => {
+  const video = (doc) => Object.assign(new El('video', doc), { paused: false, pause() { this.paused = true; } });
+  let clip;
+  const t = boot('https://www.youtube.com/', { unlocks: [{ site: 'youtube', at: NOON }] }, (doc, root) => {
+    doc.readyState = 'complete';
+    clip = video(doc);
+    root.append(clip);
+  }, new Map());
+  assert.equal(t.reason(), null, 'not covered with default settings first');
+  await settle();
+  assert.equal(t.reason(), null);
+  assert.equal(t.stops(), 0);
+  assert.deepEqual(t.reloads, []);
+  assert.equal(clip.paused, false, 'its video plays on');
+  // a page the old instance stopped and blocked stays covered, and loads for real once it may show
+  const held = boot('https://www.youtube.com/', {}, (doc, root) => {
+    doc.readyState = 'interactive';
+    root.setAttribute('data-dis2tract-stopped', '');
+    const stale = new El('div', doc);
+    stale.setAttribute('id', 'dis2tract');
+    root.append(stale);
+  }, new Map());
+  assert.equal(held.reason(), 'feed');
+  await settle();
+  assert.equal(held.stops(), 0, 'stopped once already');
+  await held.setStorage({ unlocks: [{ site: 'youtube', at: NOON }] });
+  assert.deepEqual(held.reloads, ['https://www.youtube.com/']);
 });
 
 test('a switched-off site is left alone; settings from another version are discarded', async () => {
@@ -944,8 +1450,10 @@ test('a switched-off site is left alone; settings from another version are disca
 
 test('block screen: @profile, reddit r/name, search, my profile link and theme colors', async () => {
   const t = boot('https://x.com/home', { settings: { version: 2, handles: { x: 'jack' } }, theme: { '--d2t-bg': 'rgb(1 2 3)' } });
+  assert.equal(t.overlay().getAttribute('data-live'), null, 'the first paint takes the theme registered at load');
   await settle();
   assert.equal(t.overlay().style.props['--d2t-bg'], 'rgb(1 2 3)');
+  assert.equal(t.overlay().getAttribute('data-live'), '', 'then the one in storage, which a theme switched since then wins');
   assert.ok(t.find((n) => n.tagName === 'A' && n.getAttribute('href') === '/jack' && n.textContent === 'my profile'));
   const form = t.find((n) => n.tagName === 'FORM');
   const input = form.querySelector('input');
@@ -1139,6 +1647,12 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   on.message('something else');
   on.message('chime');
   assert.equal(played.length, 1, 'the chime, and only on its own message');
+  // a private window's run of items is kept in memory, never written to storage
+  const before = JSON.stringify(saved);
+  on.message({ trail: 'trail:youtube', value: { chain: ['a', 'b'], at: NOON } });
+  assert.deepEqual(JSON.parse(JSON.stringify(await on.message({ getTrail: 'trail:youtube' }))), { chain: ['a', 'b'], at: NOON });
+  assert.equal(await on.message({ getTrail: 'trail:x' }), null);
+  assert.equal(JSON.stringify(saved), before, 'nothing on disk');
   // the file it plays is in the repo and in the package
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
   assert.ok(fs.statSync(path.join(__dirname, '..', played[0])).size > 0, played[0]);

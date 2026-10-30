@@ -1,6 +1,6 @@
 const form = document.querySelector('form');
 const store = browser.storage.local;
-const clock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase();
 
 function el(tag, props = {}, ...kids) {
   const node = Object.assign(document.createElement(tag), props);
@@ -37,9 +37,11 @@ for (const [id, site] of Object.entries(SITES)) {
 for (const [name, [min, max]] of Object.entries(LIMITS)) Object.assign(form.elements[name], { min, max });
 document.getElementById('limits-note').textContent =
   `0 turns a limit off. an unlock gives ${UNLOCK.minutes} min of feed, counted only while you watch or scroll; the next waits ` +
-  `${UNLOCK.cooldownMinutes} min after they run out; ${UNLOCK.perDay} a day, across all sites; none from ` +
-  `${UNLOCK.bedtime[0]}:00 to ${UNLOCK.bedtime[1]}:00. anything that loosens a ` +
-  `setting applies ${LOOSEN_DELAY_MINUTES} min after you change it.`;
+  `${UNLOCK.cooldownMinutes} min after they run out; ${UNLOCK.perDay} a day, across all sites; none at bedtime, which ` +
+  `can start earlier or end later than ${DEFAULTS.bedtimeFrom}:00 to ${DEFAULTS.bedtimeTo}:00, never the other way. ` +
+  `switching a feed off lifts its block; in a row and the scroll limit still apply there, so a swipe feed (shorts, ` +
+  `reels, for you) still stops at the 5th video. anything that loosens a setting applies ${LOOSEN_DELAY_MINUTES} min ` +
+  `after you change it.`;
 
 function applyTheme(theme = {}) {
   document.documentElement.style.cssText = '';
@@ -79,7 +81,7 @@ async function render() {
   if (stats?.since) {
     const parts = [[stats.unlocks, 'unlocks'], [stats.wrong, 'wrong answers'], [stats.hops, 'app hops']];
     document.getElementById('stats').textContent =
-      `since ${new Date(stats.since).toLocaleDateString()}: ${parts.map(([n, what]) => `${n ?? 0} ${what}`).join(', ')}.`;
+      `since ${new Date(stats.since).toLocaleDateString()}: ${parts.map(([n, what]) => `${n ?? 0} ${n === 1 ? what.replace(/s$/, '') : what}`).join(', ')}.`;
   }
 }
 

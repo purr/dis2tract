@@ -5,14 +5,19 @@ var DEFAULTS = {
   sites: {}, // siteId -> false when switched off; every site in SITES is on by default
   handles: {}, // siteId -> your handle, for the "my profile" link on sites without SITES[id].me
   toggles: {}, // "siteId.feed" -> false lets that feed through; "siteId.tweak" -> true/false overrides its default
-  note: '', // a note to your future self, shown before an unlock and on the farewell page
+  note: '', // a note to your future self, shown in the pause before an unlock
   scrollScreens: 12, // screens of scrolling allowed per page, 0 = no limit
   chainLimit: 4, // different videos/posts in a row, 0 = no limit
   sentenceWords: 15,
+  // hours: from the first to the second no unlock starts or runs; late scrolling costs sleep
+  bedtimeFrom: 23,
+  bedtimeTo: 5,
   chime: true, // a clock chime when a block appears while browsing
 };
-// [min, max] of each number setting; the options page builds its inputs from this, loading clamps older saves
-var LIMITS = { scrollScreens: [0, 500], chainLimit: [0, 100], sentenceWords: [12, 60] };
+// [min, max] of each number setting; the options page builds its inputs from this, loading clamps older saves.
+// bedtime can only widen 23:00-5:00, never shrink: every start lies after every end, so the window always wraps
+// midnight (lateNight() in ui.js relies on that)
+var LIMITS = { scrollScreens: [0, 500], chainLimit: [0, 100], sentenceWords: [12, 60], bedtimeFrom: [18, 23], bedtimeTo: [5, 15] };
 
 // fixed on purpose, no settings: nothing to stretch in a weak moment. the limits span all sites, so hopping
 // from one unlocked feed to the next is not a way around them.
@@ -20,11 +25,10 @@ var UNLOCK = {
   minutes: 3,
   cooldownMinutes: 20, // from the end of one unlock to the start of the next
   perDay: 10,
-  bedtime: [23, 5], // hours: from the first to the second no unlock starts or runs; late scrolling costs sleep
   waitSeconds: 15, // the pause before a challenge
   idleSeconds: 10, // no input this long and nothing playing: a page is not in use (unlock minutes, the day's time)
   mutedSeconds: 60, // a muted player counts as use only this long after the last input: feeds loop muted clips
-  penaltySeconds: 30, // a wrong number waits this long for a new challenge
+  penaltySeconds: 30, // a wrong enter (text or number) waits this long for a new challenge
   moreScrollSeconds: 10, // past the scroll limit: the wait before another full budget for that page
   // right after an unlock ends: one extra minute to finish a video, paid for with a longer cooldown
   extendMinutes: 1,
@@ -43,13 +47,14 @@ function mergeSettings(saved) {
 }
 
 // true when next lets more through than current: a site switched off, a feed let through, a limit raised or
-// turned off (0), or a shorter unlock sentence. tweaks are neither looser nor tighter.
+// turned off (0), a shorter unlock sentence, or a shorter bedtime. tweaks are neither looser nor tighter.
 const feedKeys = () => Object.entries(SITES).flatMap(([id, site]) => site.feeds.map(([key]) => `${id}.${key}`));
 function looser(next, current) {
   const limit = (key) => (next[key] === 0 ? current[key] !== 0 : current[key] !== 0 && next[key] > current[key]);
   return Object.entries(next.sites).some(([id, on]) => on === false && current.sites[id] !== false)
     || feedKeys().some((key) => next.toggles[key] === false && current.toggles[key] !== false)
-    || limit('scrollScreens') || limit('chainLimit') || next.sentenceWords < current.sentenceWords;
+    || limit('scrollScreens') || limit('chainLimit') || next.sentenceWords < current.sentenceWords
+    || next.bedtimeFrom > current.bedtimeFrom || next.bedtimeTo < current.bedtimeTo;
 }
 
 // the part of a saved change that applies at once: everything in next except what loosens, which keeps its

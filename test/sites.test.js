@@ -11,8 +11,10 @@ const { SITES, feedOf, looser, tighterPart, mergeSettings, siteFor, conversation
 // hold too) and the porn page's
 const ANSWERS = [...NEEDS, LATE, ...Array.from({ length: 24 * 60 - 30 }, (_, i) => instead(30 + i)), ...URGES, URGE_LATE];
 
-test('every roast question, suggestion and porn page quote fits one line on a phone', () => {
-  const lines = [...ANSWERS.flatMap(([question, ideas]) => [question, ...ideas.map(([text]) => text)]), ...SHAME.flat()];
+test('every roast question, suggestion, porn page quote and feed line fits one line on a phone', () => {
+  // the block screen's line under "no feed" (TEXT.feed in content.js), with every feed's label
+  const feeds = Object.values(SITES).flatMap((site) => site.feeds.map(([, label]) => `endless feed: ${site.name} ${label}.`));
+  const lines = [...ANSWERS.flatMap(([question, ideas]) => [question, ...ideas.map(([text]) => text)]), ...SHAME.flat(), ...feeds];
   for (const line of lines) assert.ok(line.length <= 38, `${line.length} characters: ${line}`);
   assert.ok(SHAME.every((quote) => quote.length <= 2), 'a quote is one or two lines');
 });
@@ -265,6 +267,12 @@ test('looser: what waits and what applies at once', () => {
   assert.ok(!looser(with_({ scrollScreens: 5, chainLimit: 2, sentenceWords: 30 }), base), 'all tighter');
   assert.ok(!looser(with_({ toggles: { 'youtube.theater': false }, handles: { x: 'jack' }, note: 'hi' }), base), 'tweaks, handles and the note');
   assert.ok(!looser(base, with_({ scrollScreens: 0 })), 'turning a limit back on');
+  assert.ok(looser(with_({ bedtimeFrom: 23 }), with_({ bedtimeFrom: 21 })), 'a later bedtime');
+  assert.ok(looser(base, with_({ bedtimeTo: 7 })), 'an earlier morning');
+  assert.ok(!looser(with_({ bedtimeFrom: 21, bedtimeTo: 7 }), base), 'a longer bedtime');
+  // bedtime only widens 23:00-5:00: a saved value outside its range (tampered storage) is clamped back into it
+  const clamped = mergeSettings({ version: 2, bedtimeFrom: 3, bedtimeTo: 20 });
+  assert.deepEqual([clamped.bedtimeFrom, clamped.bedtimeTo], [LIMITS.bedtimeFrom[0], LIMITS.bedtimeTo[1]]);
 });
 
 test('reddit wildcard host: language subdomains count, unrelated subdomains do not', () => {

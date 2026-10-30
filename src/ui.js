@@ -16,11 +16,11 @@ function pick(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-// bedtime (UNLOCK.bedtime, settings.js): no unlocks, and the late-night question replaces the others
-function lateNight() {
-  const [from, to] = UNLOCK.bedtime;
-  const hour = new Date(Date.now()).getHours();
-  return hour >= from || hour < to;
+// bedtime (bedtimeFrom to bedtimeTo in the settings, settings.js) at time t: no unlocks, and the late-night question
+// replaces the others. a page without the user's settings (the porn page) goes by the default hours
+function lateNight(s = DEFAULTS, t = Date.now()) {
+  const hour = new Date(t).getHours();
+  return hour >= s.bedtimeFrom || hour < s.bedtimeTo;
 }
 
 // the line under the title, each sentence on its own line, so a line never breaks inside one
