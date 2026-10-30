@@ -1787,32 +1787,6 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   on.navigate({ frameId: 0, tabId: 40, url: 'https://ei.phncdn.com/videos/a.jpg' });
   await settle();
   assert.deepEqual(sent, [[40, 'porn/porn.html?host=ei.phncdn.com']]);
-  // each search engine's strict mode, once; a frame, and a page that is no search, are left alone
-  sent.length = 0;
-  for (const [tabId, url] of [
-    [41, 'https://www.google.com/search?q=a&udm=2&safe=off'],
-    [42, 'https://www.google.co.uk/search?q=a'],
-    [43, 'https://www.bing.com/images/search?q=a'],
-    [44, 'https://duckduckgo.com/?q=a&ia=images'],
-    [45, 'https://search.brave.com/images?q=a'],
-  ]) on.navigate({ frameId: 0, tabId, url });
-  on.navigate({ frameId: 3, tabId: 46, url: 'https://www.google.com/search?q=a' });
-  on.navigate({ frameId: 0, tabId: 47, url: 'https://www.google.com/maps' });
-  on.navigate({ frameId: 0, tabId: 48, url: 'https://www.bing.com/search?q=a&adlt=strict' });
-  assert.deepEqual(sent, [
-    [41, 'https://www.google.com/search?q=a&udm=2&safe=active&ssui=on'],
-    [42, 'https://www.google.co.uk/search?q=a&safe=active&ssui=on'],
-    [43, 'https://www.bing.com/images/search?q=a&adlt=strict'],
-    [44, 'https://duckduckgo.com/?q=a&ia=images&kp=1'],
-    [45, 'https://search.brave.com/images?q=a&safesearch=strict'],
-  ]);
-  // an engine that drops the parameter on its way does not go round forever; the same search later is forced again
-  sent.length = 0;
-  on.committed({ frameId: 0, tabId: 42, url: 'https://www.google.co.uk/search?q=a' });
-  assert.deepEqual(sent, []);
-  clock.now += 5000;
-  on.navigate({ frameId: 0, tabId: 42, url: 'https://www.google.co.uk/search?q=a' });
-  assert.deepEqual(sent, [[42, 'https://www.google.co.uk/search?q=a&safe=active&ssui=on']]);
   // a new install opens the settings once; an update does not
   let opened = 0;
   vm.runInContext('browser', bg).runtime.openOptionsPage = () => { opened += 1; };

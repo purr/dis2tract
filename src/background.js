@@ -214,17 +214,6 @@ async function stepOver(details) {
   if (page?.url.startsWith(browser.runtime.getURL('porn/'))) browser.tabs.goBack(tabId);
   else guard(details, false);
 }
-// each engine's own strict mode, on every results page. its adult pictures load as images, no navigation for guard()
-// to see, so this is what keeps them off. through the address, so no host permission and no longer install prompt
-// (chromium's safe_search_util for google's parameters, each engine's help pages; 2026-10). yandex and startpage
-// keep theirs in a cookie or a post, out of reach here
-const SAFE_SEARCH = [
-  [/^(www\.)?google\.(com?\.)?[a-z]{2,3}$/, /^\/(search|imgres)$/, { safe: 'active', ssui: 'on' }],
-  [/^((www|cn)\.)?bing\.com$/, /^\/(search|images\/|videos\/)/, { adlt: 'strict' }],
-  [/^((html|lite)\.)?duckduckgo\.com$/, /^\/((html|lite)\/?)?$/, { kp: '1' }],
-  [/^search\.brave\.com$/, /^\/(search|images|videos|news)/, { safesearch: 'strict' }],
-];
-const forced = new Map(); // per tab, the last address this sent it to and when
 // every top-level navigation, before it loads and again once it commits: a redirect (a link shortener, an alias
 // domain) shows its real address only then. a frame (reddit's redgifs players) counts once it commits: firefox
 // reports a frame's onBeforeNavigate before a blocker (ublock origin, tracking protection) can cancel its request,
@@ -238,19 +227,10 @@ function guard({ frameId, tabId, url }, committed) {
   const host = u.hostname.replace(/\.+$/, '');
   const named = untranslated(u, host);
   if (isPorn(named)) return toPorn(tabId, { host: named }, committed, frameId === 0 ? url : undefined);
-  if (frameId !== 0) return undefined;
-  const strict = SAFE_SEARCH.find(([hosts, paths]) => hosts.test(host) && paths.test(u.pathname))?.[2] ?? {};
-  const loose = Object.entries(strict).filter(([key, value]) => u.searchParams.get(key) !== value);
-  const dotted = host !== u.hostname && onSites(host);
-  if (!loose.length && !dotted) return undefined;
-  if (dotted) u.hostname = host;
-  for (const [key, value] of loose) u.searchParams.set(key, value);
-  // an engine that drops the parameter on its way must not make this go round forever. the same search typed again
-  // later is forced again
-  const last = forced.get(tabId);
-  if (last?.href === u.href && Date.now() - last.at < 2000) return undefined;
-  forced.set(tabId, { href: u.href, at: Date.now() });
-  return browser.tabs.update(tabId, { url: u.href });
+  if (frameId === 0 && host !== u.hostname && onSites(host)) {
+    u.hostname = host;
+    return browser.tabs.update(tabId, { url: u.href });
+  }
 }
 browser.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0) return;
