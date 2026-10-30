@@ -10,6 +10,15 @@ const read = (f) => fs.readFileSync(path.join(__dirname, '../src', f), 'utf8');
 const settle = () => new Promise((r) => setImmediate(r));
 
 // the page as links.js sees it: the page's clipboard api behind the xray, document events, a selection
+// firefox's xray in a content script: what keys(), values() and entries() return is not iterable
+const xrayURL = {
+  parse(href) {
+    const u = URL.parse(href);
+    if (u) for (const name of ['keys', 'values', 'entries']) u.searchParams[name] = () => ({ next: () => ({ done: true }) });
+    return u;
+  },
+};
+
 function page(settings) {
   const copied = [];
   const listeners = {};
@@ -18,7 +27,7 @@ function page(settings) {
   const pageClipboard = { writeText(text) { copied.push(text); return Promise.resolve(); } };
   const doc = { activeElement: null, addEventListener: (type, f) => (listeners[type] ??= []).push(f) };
   const ctx = vm.createContext({
-    URL,
+    URL: xrayURL,
     window: { wrappedJSObject: { Clipboard: { prototype: pageClipboard } } },
     Clipboard: { prototype: own },
     exportFunction: (fn, target, { defineAs }) => { target[defineAs] = fn; },

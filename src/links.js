@@ -28,7 +28,12 @@ function cleanLink(href) {
   const u = URL.parse(href);
   if (!u || !/^https?:$/.test(u.protocol) || !u.search) return href;
   const rules = TRACKING.filter(([host]) => host.test(u.hostname)).map(([, keys]) => keys);
-  const gone = [...u.searchParams.keys()].filter((key) => rules.some((rx) => rx.test(key)));
+  // forEach, not [...keys()]: in a content script the iterator comes through firefox's xray and is not iterable. the
+  // throw reached the page through the clipboard wrapper and broke the sites' own copy buttons
+  const gone = [];
+  u.searchParams.forEach((_, key) => {
+    if (rules.some((rx) => rx.test(key))) gone.push(key);
+  });
   if (!gone.length) return href;
   for (const key of gone) u.searchParams.delete(key);
   return u.href;
