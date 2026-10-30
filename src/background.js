@@ -234,28 +234,191 @@ function recheck() {
 }
 
 // sites with porn among everything else mark it in the data they load: x flags media "adult_content" (apart from
-// graphic_violence), reddit tags posts nsfw (new reddit's shreddit elements) or over18 (old reddit), bluesky labels
-// posts and accounts porn, sexual or nudity. those answers are read on their way to the page (passed on untouched)
-// and a tab that loaded any such content goes to the porn page: no word lists, so any language and any slang
-const LABELED = [
-  { urls: ['*://x.com/i/api/graphql/*'], types: ['xmlhttprequest'], adult: /"adult_content":\s*true/ },
-  { urls: ['*://*.reddit.com/*'], types: ['main_frame', 'xmlhttprequest'], adult: /<shreddit-[\w-]+\s[^>]*\bnsfw[\s=>]|class="[^"]*\bover18\b/ },
-  { urls: ['*://*.bsky.network/xrpc/*', '*://public.api.bsky.app/xrpc/*'], types: ['xmlhttprequest'], adult: /"val":"(porn|sexual|nudity)"/ },
-];
-for (const { urls, types, adult } of LABELED) {
-  browser.webRequest.onBeforeRequest.addListener(({ requestId, tabId }) => {
-    if (tabId < 0) return; // a request of no tab (a service worker): no page to send anywhere
+// graphic_violence), reddit tags posts nsfw and the posts of adult communities subreddit-nsfw (one flag for sexual
+// and graphic content alike, so the porn page names the site whose mark it was), bluesky labels posts and accounts
+// porn, sexual or sexual-figurative (drawn; nudity is non-sexual art, shown by default: atproto labels.json and
+// bluesky's labeler definitions, 2026-10). no word lists, so any language and any slang. only the item the tab's
+// address names counts, never its neighbours: a stranger marks their own reply, account or post beside it in a list,
+// and the sites hide or blur those by default. search, home, notifications and other lists name no item and are not
+// judged. a marked answer never reaches the page; the tab goes to the porn page instead
+const ADULT_LABELS = ['porn', 'sexual', 'sexual-figurative'];
+
+// a parsed json answer, or null. a cut-off answer is no valid json: firefox fires stop for a cancelled request too
+// (StreamFilterChild::RecvStopRequest drops the status), so this is what keeps a request cut off by leaving the page
+// from sending the tab anywhere. a site's error page is no json either
+function json(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+// whether test holds for an object anywhere in parsed json
+const anyObject = (v, test) => Boolean(v) && typeof v === 'object' && (test(v) || Object.values(v).some((x) => anyObject(x, test)));
+
+// x: on a status address the post it names (and the one on screen in the phone's media viewer, ?currentTweet=), on a
+// profile and its tabs the profile's own posts in its timelines, the calls that carry variables.userId (x's own pages,
+// /home or /search, sit where a handle would and load none). posts are __typename Tweet or the .tweet of a
+// TweetWithVisibilityResults, the handle sits in the author's core (earlier in its legacy), and a post it quotes or
+// reposts is a post of its own (twscrape's captures of live answers, 2026-10-21; gallery-dl's graphql calls, 2026-04)
+function xItem(u) {
+  if (u.hostname !== 'x.com') return null;
+  const status = /^\/\w+(?:\/web)?\/status\/(\d+)/.exec(u.pathname)?.[1];
+  if (status) return { posts: [status, u.searchParams.get('currentTweet')] };
+  const handle = /^\/(\w{1,15})(?:\/\w+)?\/?$/.exec(u.pathname)?.[1];
+  return handle ? { handle: handle.toLowerCase() } : null;
+}
+const tweetOf = (v) => (v.__typename === 'TweetWithVisibilityResults' ? v.tweet : v.__typename === 'Tweet' ? v : null);
+const handleOf = ({ core }) => (core?.user_results?.result?.core?.screen_name ?? core?.user_results?.result?.legacy?.screen_name)?.toLowerCase();
+const flagged = (v, post) => Boolean(v) && typeof v === 'object' && (v === post || !tweetOf(v))
+  && (v.adult_content === true || Object.values(v).some((x) => flagged(x, post)));
+function xMarked(text, { posts, handle }, request) {
+  if (handle && !JSON.parse(new URL(request).searchParams.get('variables'))?.userId) return false;
+  return anyObject(json(text), (v) => {
+    const post = tweetOf(v);
+    return Boolean(post) && (posts ? posts.includes(post.rest_id) : handleOf(post) === handle) && flagged(post, post);
+  });
+}
+
+// bluesky: the post of /profile/<actor>/post/<rkey> (and its likes, reposts and quotes pages), or on /profile/<actor>
+// the profile's own labels and its own posts'. actor is a handle or a did. a post's labels are its self-labels and
+// those on its uri, a profile's those on its account and its profile record (atproto bsky views/index.ts, 2026-10)
+function blueskyItem(u) {
+  if (u.hostname !== 'bsky.app') return null;
+  const [, actor, rkey] = /^\/profile\/([^/]+)(?:\/post\/([^/]+)|\/?$)/.exec(u.pathname) ?? [];
+  return actor ? { actor: decodeURIComponent(actor).toLowerCase(), rkey } : null;
+}
+function blueskyMarked(text, { actor, rkey }) {
+  const isActor = (p) => typeof p?.did === 'string' && (p.did === actor || p.handle?.toLowerCase() === actor);
+  const adult = (v) => Array.isArray(v.labels) && v.labels.some((l) => ADULT_LABELS.includes(l?.val) && !l.neg);
+  return anyObject(json(text), (v) => (typeof v.uri === 'string' && v.uri.includes('/app.bsky.feed.post/') && isActor(v.author)
+    ? (!rkey || v.uri.endsWith(`/${rkey}`)) && adult(v)
+    : !rkey && isActor(v) && adult(v)));
+}
+
+// reddit: the post of /comments/<id> (or /gallery/<id>) by its own mark or its community's, a subreddit's other pages
+// by its community's. new reddit puts both on the post's tag: nsfw="" (sheddit, checked live 2026-08-18) and
+// subreddit-nsfw (xta and surfsense 2026-10-22, mkornreich/old_reddit's probe 2026-10-29); before that a post of an
+// adult community carried only nsfw, and the community's own flag sits in <reddit-page-data>, after a listing's posts
+// (saved pages, 2024-12 and 2025-08). old reddit's over18 class on a post means its own flag or its subreddit's (r2
+// link.py), and its subreddit pages carry no mark of their own
+function redditItem(u) {
+  if (!/(^|\.)reddit\.com$/.test(u.hostname)) return null;
+  const post = /\/comments\/([a-z0-9]+)|^\/gallery\/([a-z0-9]+)/i.exec(u.pathname);
+  if (post) return { post: `t3_${(post[1] ?? post[2]).toLowerCase()}` };
+  const sub = /^\/r\/(\w+)(?:\/|$)/.exec(u.pathname)?.[1];
+  return sub ? { sub: `r/${sub.toLowerCase()}` } : null;
+}
+// tags are read attribute by attribute, quoted values stepped over whole: titles and community descriptions sit in
+// attributes, so their words are never read as a mark (and a > in them ends no tag)
+const TAG_START = /<(shreddit-post|reddit-page-data|div)\s/gi;
+const TAG_REST = /(?:[^>"']|"[^"]*"|'[^']*')*>/y;
+const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+// the complete tags in text, and where to read on once more arrives: at a tag still arriving, else near the end
+function redditTags(text) {
+  const tags = [];
+  let end = 0;
+  TAG_START.lastIndex = 0;
+  for (let m; (m = TAG_START.exec(text)); ) {
+    TAG_REST.lastIndex = TAG_START.lastIndex;
+    if (!TAG_REST.test(text)) return { tags, rest: m.index };
+    const attrs = {};
+    for (const [, name, ...values] of text.slice(TAG_START.lastIndex, TAG_REST.lastIndex - 1).matchAll(ATTRIBUTE)) attrs[name.toLowerCase()] = values.find((v) => v !== undefined) ?? '';
+    tags.push({ name: m[1].toLowerCase(), attrs });
+    end = TAG_START.lastIndex = TAG_REST.lastIndex;
+  }
+  return { tags, rest: Math.max(end, text.length - '<reddit-page-data'.length) }; // a tag's name may be cut off at the end
+}
+const on = (attrs, name) => name in attrs && attrs[name] !== 'false';
+// a tag's verdict on the item: true (marked), false (unmarked, by the item's own tag or data), undefined (not decided).
+// a post of the subreddit without the community mark decides nothing: the 2025 posts did not carry it
+function redditMark({ name, attrs }, { post, sub }) {
+  if (name === 'shreddit-post' && post && attrs.id === post) return on(attrs, 'nsfw') || on(attrs, 'subreddit-nsfw');
+  if (name === 'shreddit-post' && sub && attrs['subreddit-prefixed-name']?.toLowerCase() === sub && on(attrs, 'subreddit-nsfw')) return true;
+  const page = name === 'reddit-page-data' && sub ? json((attrs.data ?? '').replaceAll('&quot;', '"'))?.subreddit : null;
+  if (page && page.prefixedName?.toLowerCase() === sub) return page.isNsfw === true;
+  if (name === 'div' && post && attrs['data-fullname'] === post) return /(?:^|\s)over18(?:\s|$)/.test(attrs.class ?? '');
+  return undefined;
+}
+
+// a json answer is read whole (an app can use it only whole anyway) and passed on unchanged unless the item the tab's
+// address names is marked in it. the address is the tab's at the end: a single-page site's request can outlive the
+// route it started on, and details.documentUrl is the address the page was first loaded at (the loading principal's,
+// which pushState never changes: ChannelWrapper::GetDocumentURI, nsDocShell::UpdateURLAndHistory, 2026-10)
+function readJson(site, itemOf, marked) {
+  return ({ requestId, tabId, url: request }) => {
     const filter = browser.webRequest.filterResponseData(requestId);
-    const decoder = new TextDecoder();
-    let text = '';
-    filter.ondata = ({ data }) => {
-      filter.write(data); // first, so the page gets its data whatever happens below
+    const chunks = [];
+    filter.ondata = ({ data }) => chunks.push(data);
+    filter.onstop = async () => {
+      let hit = false;
+      try {
+        // no url: a tab gone to a site without host permission. a closed tab has nothing to send anywhere
+        const { url } = await browser.tabs.get(tabId).catch(() => ({}));
+        const item = url && itemOf(new URL(url));
+        const decoder = new TextDecoder();
+        hit = Boolean(item) && marked(chunks.map((d) => decoder.decode(d, { stream: true })).join('') + decoder.decode(), item, request);
+      } catch (e) {
+        console.error(`dis2tract: reading ${site}'s adult labels failed, the answer goes through`, e);
+      }
+      if (!hit) for (const data of chunks) filter.write(data);
+      filter.close(); // a marked answer ends empty: the app shows its own error until the porn page loads
+      // the labeled page has committed by then: toPorn() takes its history entry, or on android steps over it
+      if (hit) toPorn(tabId, { mark: site }, true);
+    };
+  };
+}
+// reddit's pages are read as they stream in, each chunk passed on at once unless it completes the tag of the marked
+// item the address names: then neither it nor anything after it reaches the page (an unfinished tag never renders),
+// so the post never paints. a page load is the page at its own address; a partial asks for the tab's address when its
+// first tag arrives. decided only as tags arrive, never at the end, which a cut-off request reaches too. once the
+// item's own tag or data is in unmarked, the rest goes to the page unread. not disconnect(): chunks can wait in the
+// queue behind the address, and a write after disconnect() is dropped
+function readReddit({ requestId, tabId, type, url }) {
+  let item = type === 'main_frame' ? redditItem(new URL(url)) : undefined;
+  if (item === null) return; // a page that names no post or subreddit
+  const filter = browser.webRequest.filterResponseData(requestId);
+  const decoder = new TextDecoder();
+  let text = '';
+  let state; // 'clear' once the item's own tag is in unmarked or the address names nothing, 'sent' once it is marked
+  let queue = Promise.resolve();
+  filter.ondata = ({ data }) => (queue = queue.then(async () => {
+    if (state === 'sent') return;
+    if (state !== 'clear') {
       text += decoder.decode(data, { stream: true });
-    };
-    filter.onstop = () => {
-      filter.close();
-      if (adult.test(text + decoder.decode())) browser.tabs.update(tabId, { url: browser.runtime.getURL('porn/porn.html') });
-    };
+      const { tags, rest } = redditTags(text);
+      text = text.slice(rest);
+      for (const tag of tags) {
+        if (item === undefined) {
+          const { url: address } = await browser.tabs.get(tabId).catch(() => ({})); // a closed tab names nothing
+          item = address ? redditItem(new URL(address)) : null;
+        }
+        const mark = item ? redditMark(tag, item) : undefined;
+        if (mark) {
+          state = 'sent';
+          filter.close();
+          toPorn(tabId, { mark: 'reddit' }, true);
+          return;
+        }
+        if (mark === false || item === null) {
+          state = 'clear';
+          break;
+        }
+      }
+    }
+    filter.write(data);
+  }));
+  filter.onstop = () => (queue = queue.then(() => state === 'sent' || filter.close()));
+}
+
+const LABELED = [
+  { urls: ['*://x.com/i/api/graphql/*'], types: ['xmlhttprequest'], read: readJson('x', xItem, xMarked) },
+  { urls: ['*://*.reddit.com/*'], types: ['main_frame', 'xmlhttprequest'], read: readReddit },
+  { urls: ['*://*.bsky.network/xrpc/*', '*://public.api.bsky.app/xrpc/*'], types: ['xmlhttprequest'], read: readJson('bluesky', blueskyItem, blueskyMarked) },
+];
+for (const { urls, types, read } of LABELED) {
+  browser.webRequest.onBeforeRequest.addListener((details) => {
+    if (details.tabId >= 0) read(details); // a request of no tab (a service worker) has no page to send anywhere
   }, { urls, types }, ['blocking']);
 }
 

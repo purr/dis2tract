@@ -1637,7 +1637,6 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const sent = []; // tabs sent elsewhere: [tabId, url], and 'replace' when the url takes the place of the current entry
   const reported = []; // history changes passed on to a tab: [tabId, url, frameId]
   const watched = []; // webRequest listeners: { f, filter, extra }
-  const streams = {}; // response filters by request id
   // tabs open before the background page runs, with their frames: a listed page, a listed player inside another
   // site after a frame that has shown nothing yet (no url), a tab closed meanwhile (getAllFrames rejects) and a
   // discarded one (no frames)
@@ -1675,7 +1674,6 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     },
     webRequest: {
       onBeforeRequest: { addListener: (f, filter, extra) => watched.push({ f, filter, extra }) },
-      filterResponseData: (requestId) => (streams[requestId] = { written: [], write(d) { this.written.push(d); }, close() { this.closed = true; } }),
     },
     tabs: {
       update: (tabId, { url, loadReplace }) => {
@@ -1782,30 +1780,6 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   on.navigate({ frameId: 0, tabId: 14, url: 'https://x.com./home' });
   on.navigate({ frameId: 0, tabId: 19, url: 'https://news.example./' });
   assert.deepEqual(sent, [[14, 'https://x.com/home']]);
-  // adult labels in what x, reddit and bluesky load: the data reaches the page untouched, and the tab goes to the
-  // porn page. each answer arrives split, the way a response streams in
-  const encode = (s) => new TextEncoder().encode(s);
-  const answer = (pattern, tabId, ...chunks) => {
-    const { f } = watched.find((w) => w.filter.urls.includes(pattern));
-    f({ requestId: `${pattern}${tabId}`, tabId });
-    const stream = streams[`${pattern}${tabId}`];
-    if (!stream) return null;
-    for (const chunk of chunks) stream.ondata({ data: encode(chunk) });
-    stream.onstop();
-    return stream;
-  };
-  sent.length = 0;
-  const xs = answer('*://x.com/i/api/graphql/*', 30, '{"media":[{"sensitive_media_warning":{"adult_', 'content":true}}]}');
-  answer('*://x.com/i/api/graphql/*', 31, '{"sensitive_media_warning":{"adult_content":false,"graphic_violence":true}}');
-  answer('*://*.reddit.com/*', 32, '<article><shreddit-post post-title="pics" nsfw="" score="5">');
-  answer('*://*.reddit.com/*', 33, '<div class=" thing id-t3_1 over18 link">');
-  answer('*://*.reddit.com/*', 34, '<shreddit-post post-title="cat pics" score="5">');
-  answer('*://*.bsky.network/xrpc/*', 35, '{"labels":[{"src":"did:plc:x","val":"porn"}]}');
-  answer('*://*.bsky.network/xrpc/*', 36, '{"labels":[{"val":"graphic-media"}]}');
-  assert.equal(answer('*://x.com/i/api/graphql/*', -1, '{}'), null, 'no tab, nothing read');
-  assert.deepEqual(sent, [30, 32, 33, 35].map((tab) => [tab, 'porn/porn.html']));
-  assert.deepEqual(xs.written.map((d) => new TextDecoder().decode(d)), ['{"media":[{"sensitive_media_warning":{"adult_', 'content":true}}]}']);
-  assert.ok(xs.closed);
   // every address read is one the manifest grants, or firefox would not hand over the answer
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../manifest.json'), 'utf8'));
   const granted = manifest.permissions.filter((p) => p.includes('://')).map((p) => p.split('/')[2]);
@@ -1909,4 +1883,114 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.deepEqual(sent, [[7, 'porn/porn.html?host=example.test'], [9, 'porn/porn.html?host=example.test&skip']]);
   assert.equal(played.length, 0);
   assert.equal(saved.pornList.domains.length, 1002);
+});
+
+test('background: an adult mark counts only on the item the tab\'s address names, and a marked answer never reaches the page', async () => {
+  const sent = []; // [tabId, tabs.update properties]
+  const watched = []; // webRequest listeners: { f, filter }
+  const streams = {}; // response filters by request id
+  const addresses = {}; // each tab's address now; none for a tab on a site without host permission
+  const browser = {
+    runtime: {
+      getManifest: () => ({ content_scripts: [{ matches: ['*://x.com/*'] }] }),
+      getURL: (p) => p,
+      getPlatformInfo: async () => ({ os: 'win' }),
+      onMessage: { addListener() {} },
+      setUninstallURL() {},
+    },
+    webNavigation: { onBeforeNavigate: { addListener() {} }, onCommitted: { addListener() {} }, onHistoryStateUpdated: { addListener() {} } },
+    webRequest: {
+      onBeforeRequest: { addListener: (f, filter) => watched.push({ f, filter }) },
+      filterResponseData: (id) => (streams[id] = { written: [], write(d) { this.written.push(d); }, close() { this.closed = true; } }),
+    },
+    tabs: { get: async (tabId) => ({ url: addresses[tabId] }), update: (tabId, props) => sent.push([tabId, props]), query: async () => [] },
+    browserAction: { onClicked: { addListener() {} } },
+    storage: { local: { get: async () => ({}), set: async () => {} } },
+  };
+  const document = { createElement: () => ({ getContext: () => ({}) }) };
+  // the porn list download never answers: only the labels are under test
+  vm.runInContext(read('background.js'), vm.createContext({ browser, document, console, URL, URLSearchParams, TextDecoder, fetch: () => new Promise(() => {}), setInterval() {} }));
+  const pattern = { x: '*://x.com/i/api/graphql/*', reddit: '*://*.reddit.com/*', bluesky: '*://public.api.bsky.app/xrpc/*' };
+  let tabs = 0;
+  // one request from a tab at that address, its answer split the way a response streams in: what went to the porn
+  // page and what reached the page
+  const answer = async ({ site, address, request = address, type = 'xmlhttprequest' }, ...chunks) => {
+    const tabId = ++tabs;
+    addresses[tabId] = address;
+    watched.find((w) => w.filter.urls.includes(pattern[site])).f({ requestId: tabId, tabId, type, url: request });
+    const stream = streams[tabId];
+    for (const chunk of chunks) {
+      if (!stream || stream.closed) break; // no events once a filter is closed
+      stream.ondata({ data: new TextEncoder().encode(chunk) });
+      await settle();
+    }
+    if (stream && !stream.closed) stream.onstop();
+    await settle();
+    return { sent: sent.filter(([t]) => t === tabId).map(([, props]) => ({ ...props })), page: stream?.written.map((d) => new TextDecoder().decode(d)).join('') };
+  };
+  const PORN = (site) => [{ url: `porn/porn.html?mark=${site}`, loadReplace: true }];
+
+  // x: a post the way TweetDetail and the timelines carry it (twscrape's live captures): the handle in the author's
+  // core, the media's flags in legacy
+  const post = (id, handle, flags, more) => ({
+    __typename: 'Tweet', rest_id: id, core: { user_results: { result: { __typename: 'User', core: { screen_name: handle } } } },
+    legacy: { user_id_str: `9${id}`, extended_entities: { media: [{ sensitive_media_warning: flags }] } }, ...more,
+  });
+  const timeline = (...posts) => JSON.stringify({ data: { instructions: [{ entries: posts.map((result) => ({ content: { itemContent: { tweet_results: { result } } } })) }] } });
+  const call = (name, variables) => `https://x.com/i/api/graphql/q/${name}?variables=${encodeURIComponent(JSON.stringify(variables))}`;
+  const status = { site: 'x', address: 'https://x.com/alice/status/1', request: call('TweetDetail', { focalTweetId: '1' }) };
+  const adult = timeline(post('1', 'alice', { adult_content: true }));
+  assert.deepEqual(await answer(status, adult.slice(0, 50), adult.slice(50)), { sent: PORN('x'), page: '' }, 'the opened post: none of it reaches the page');
+  // a stranger's marked reply, and a marked post the opened one quotes, are neighbours; violence is no adult mark
+  const thread = timeline(post('1', 'alice', { graphic_violence: true }, { quoted_status_result: { result: post('2', 'bob', { adult_content: true }) } }), post('3', 'carol', { adult_content: true }));
+  assert.deepEqual(await answer(status, thread.slice(0, 99), thread.slice(99)), { sent: [], page: thread }, 'passed on unchanged');
+  assert.deepEqual((await answer(status, adult.slice(0, 50))).sent, [], 'an answer cut off by leaving the page');
+  assert.deepEqual((await answer({ ...status, address: 'https://x.com/home' }, adult)).sent, [], 'the page moved on before the answer ended');
+  assert.deepEqual((await answer({ ...status, address: undefined }, adult)).sent, [], 'the tab went to another site');
+  // a profile and its tabs: the profile's own posts in its timelines, not a post it reposts
+  const media = { site: 'x', address: 'https://x.com/Alice/media', request: call('UserMedia', { userId: '91' }) };
+  assert.deepEqual((await answer(media, timeline(post('1', 'alice', { adult_content: true })))).sent, PORN('x'));
+  const repost = post('5', 'alice', {}, { legacy: { user_id_str: '91', retweeted_status_result: { result: post('6', 'bob', { adult_content: true }) } } });
+  assert.deepEqual((await answer(media, timeline(repost))).sent, []);
+  // x's own pages sit where a handle would, and their calls carry no profile's userId
+  assert.deepEqual((await answer({ site: 'x', address: 'https://x.com/home', request: call('HomeTimeline', { count: 20 }) }, timeline(post('7', 'home', { adult_content: true })))).sent, []);
+
+  // reddit: the post of the address by its own nsfw or its community's subreddit-nsfw, as the page streams in. a
+  // title, a community description and a related post beside it are no marks
+  const page = { site: 'reddit', address: 'https://www.reddit.com/r/pics/comments/abc/cats/', type: 'main_frame' };
+  const clean = ['<shreddit-subreddit-header name="pics" description="be civil, no nsfw posts.">', '<shreddit-post id="t3_rel" nsfw="">', '<shreddit-post id="t3_abc" post-title="is this nsfw > or not" subreddit-prefixed-name="r/pics">', '<div>comments</div>'];
+  assert.deepEqual(await answer(page, ...clean), { sent: [], page: clean.join('') });
+  // the chunk that completes the marked tag, and all after it, never reach the page
+  assert.deepEqual(await answer(page, '<p>header</p><shreddit-post id="t3_abc" post-title="a > b" ', 'score="5" nsfw="">', '<img src="https://i.redd.it/x.jpg">'), { sent: PORN('reddit'), page: '<p>header</p><shreddit-post id="t3_abc" post-title="a > b" ' });
+  assert.deepEqual((await answer({ ...page, address: 'https://old.reddit.com/r/pics/comments/abc/cats/' }, '<div class=" thing id-t3_abc odd link over18 " id="thing_t3_abc" data-fullname="t3_abc">')).sent, PORN('reddit'));
+  // a subreddit by its community mark, not by a marked post in it; search names no item and is not read at all
+  const sub = { ...page, address: 'https://www.reddit.com/r/pics/' };
+  assert.deepEqual((await answer(sub, '<shreddit-post id="t3_a" subreddit-prefixed-name="r/pics" nsfw="">')).sent, []);
+  assert.deepEqual((await answer({ ...sub, address: 'https://www.reddit.com/r/Adult_Sub/' }, '<shreddit-post id="t3_b" subreddit-prefixed-name="r/Adult_Sub" nsfw="" subreddit-nsfw="">')).sent, PORN('reddit'));
+  // in 2025 the posts of an adult community carried only their own mark; the page data after them names the community's
+  const older = ['<shreddit-post id="t3_d" subreddit-prefixed-name="r/Adult_Sub" nsfw="">', '<reddit-page-data data="{&quot;subreddit&quot;:{&quot;isNsfw&quot;:true,&quot;prefixedName&quot;:&quot;r/Adult_Sub&quot;}}">'];
+  assert.deepEqual(await answer({ ...sub, address: 'https://www.reddit.com/r/Adult_Sub/' }, ...older), { sent: PORN('reddit'), page: older[0] });
+  assert.deepEqual(await answer({ ...sub, address: 'https://www.reddit.com/search/?q=nsfw' }, '<shreddit-post id="t3_c" nsfw="">'), { sent: [], page: undefined });
+  // a partial is judged by the tab's address
+  const partial = { site: 'reddit', address: page.address, request: 'https://www.reddit.com/svc/shreddit/partial' };
+  assert.deepEqual((await answer(partial, '<shreddit-post id="t3_abc" nsfw="">')).sent, PORN('reddit'));
+  assert.deepEqual(await answer({ ...partial, address: 'https://www.reddit.com/user/bob/' }, '<shreddit-post id="t3_abc" nsfw="">'), { sent: [], page: '<shreddit-post id="t3_abc" nsfw="">' });
+
+  // bluesky: the post of the address by its own labels (self-labels among them), a profile by its own and its posts'
+  const view = (who, rkey, labels = [], author = []) => ({
+    uri: `at://did:plc:${who}/app.bsky.feed.post/${rkey}`, author: { did: `did:plc:${who}`, handle: `${who}.test`, labels: author.map((val) => ({ val })) },
+    record: {}, labels: labels.map((val) => ({ src: 'did:plc:mod', val })),
+  });
+  const thread2 = (anchor, ...replies) => JSON.stringify({ thread: [anchor, ...replies].map((p, depth) => ({ depth, value: { post: p } })) });
+  const opened = { site: 'bluesky', address: 'https://bsky.app/profile/alice.test/post/3k' };
+  assert.deepEqual((await answer(opened, thread2(view('alice', '3k'), view('bob', '3m', ['porn'], ['porn'])))).sent, [], 'a stranger\'s labeled reply');
+  assert.deepEqual((await answer(opened, JSON.stringify({ notifications: [{ uri: 'at://did:plc:bob/app.bsky.graph.follow/1', reason: 'follow', author: view('bob', '1', [], ['porn']).author }] }))).sent, [], 'a labeled follower in the notification poll');
+  assert.deepEqual((await answer(opened, thread2(view('alice', '3k', ['nudity'])))).sent, [], 'non-sexual nudity');
+  assert.deepEqual((await answer(opened, thread2(view('alice', '3k', ['sexual-figurative'])))).sent, PORN('bluesky'));
+  const profile = { site: 'bluesky', address: 'https://bsky.app/profile/alice.test' };
+  assert.deepEqual((await answer(profile, JSON.stringify({ did: 'did:plc:alice', handle: 'alice.test', labels: [{ val: 'porn' }] }))).sent, PORN('bluesky'));
+  assert.deepEqual((await answer(profile, JSON.stringify({ feed: [{ post: view('alice', '1', ['sexual']) }] }))).sent, PORN('bluesky'));
+  assert.deepEqual((await answer(profile, JSON.stringify({ feed: [{ post: view('bob', '2', ['porn']), reason: { by: view('alice').author } }] }))).sent, [], 'a repost');
+  watched[0].f({ requestId: 'none', tabId: -1, type: 'xmlhttprequest', url: status.request });
+  assert.equal(streams.none, undefined, 'no tab, nothing read');
 });
