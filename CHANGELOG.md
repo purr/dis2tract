@@ -7,6 +7,8 @@ newest first. each version's section becomes its github release notes.
 - porn sites are blocked for good: before the site loads, the tab goes to a page in the block screen's look and theme colors, with a quote that stings, one of two meme clips and one better thing to do. no unlock, no switch
 - which sites are porn comes from oisd's nsfw small list (over 18,000 domains of porn, adult, shock and gore), downloaded once a day without cookies or an id of your browser; the adult top-level domains are always blocked, and a few entries that aren't nsfw sites (public suffixes such as co.cz among them) are skipped. this is dis2tract's one download
 - the porn page says what set it off, going back never lands on the page that did, and its clips play in every firefox (webm instead of mp4); a listed site behind google translate is caught too, and tabs already open are checked at start and after each list update
+- google, bing, duckduckgo and brave search are held to their strict safesearch, with no new permission, and a listed site's media hosts are blocked too
+- installing opens the settings once
 - the bell stays quiet in a muted tab, and on android, where it would stop other tabs' audio
 - new versions install by themselves: firefox checks github once or twice a day. 0.5.0 to 0.7.0 can't: install this version's `.xpi` by hand once, over the old one; settings and counts stay
 - porn on x, reddit and bluesky is caught by the sites' own adult marks, so slang and any language too: a post or profile you open, or an adult subreddit. a stranger's marked reply or follower and search results don't count, and the marked post never shows

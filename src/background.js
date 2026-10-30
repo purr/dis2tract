@@ -86,6 +86,9 @@ async function syncTheme() {
 }
 
 browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPage());
+// a new install opens the settings once: the note, the handles, the chime and the private-window warning live there,
+// and the toolbar button starts hidden in the extensions panel
+browser.runtime.onInstalled.addListener(({ reason }) => reason === 'install' && browser.runtime.openOptionsPage());
 // firefox for android differs twice here. it lets one tab sound at a time and counts this page as a tab
 // (media.audioFocus.management, on only there), so the bell would stop audio playing in other tabs, and nothing
 // there tells whether one is. and its tabs.update has no loadReplace: its schema rejects the property, and with
@@ -150,9 +153,12 @@ const ADULT_TLDS = ['xxx', 'porn', 'sex', 'adult'];
 // coolify; cpanel.site: cpanel), and public suffixes, which would block every site registered under them (co.cz,
 // in.net, mex.com; publicsuffix.org). all on the list on 2026-10-30
 const NOT_PORN = ['17k.com', 'zongheng.com', 'sofiatraffic.bg', 'sslip.io', 'cpanel.site', 'co.cz', 'in.net', 'mex.com'];
+// the media hosts of listed sites, which the list leaves out: a picture or video opened at its own address (from an
+// image search, say). a short list by hand, for hosts that serve nothing else (gallery-dl and yt-dlp's extractors, 2026-10)
+const MEDIA_HOSTS = ['phncdn.com', 'highwebmedia.com', 'mmcdn.com', 'xhcdn.com', 'sb-cd.com', 'doppiocdn.com', 'rdtcdn.com', 'ypncdn.com', 't8cdn.com'];
 const DAY = 86_400_000;
 // the download and the stored copy both go through here, so an exception holds from the first start after an update
-const pornSet = (domains) => new Set([...ADULT_TLDS, ...domains.filter((d) => !NOT_PORN.includes(d))]);
+const pornSet = (domains) => new Set([...ADULT_TLDS, ...MEDIA_HOSTS, ...domains.filter((d) => !NOT_PORN.includes(d))]);
 let porn = pornSet([]);
 let pornAt = 0;
 
@@ -190,12 +196,35 @@ function untranslated(u, host) {
 // that marked what the page loaded as adult itself. a page caught after it committed has a history entry of its
 // own, and going back to it would load it and send the tab here again: that entry is replaced, or, where
 // tabs.update cannot replace (android), the porn page is told to step over it
-async function toPorn(tabId, why, committed) {
+async function toPorn(tabId, why, committed, address) {
   const url = browser.runtime.getURL(`porn/porn.html?${new URLSearchParams(why)}`);
   if (!committed) return browser.tabs.update(tabId, { url });
-  if (await android) return browser.tabs.update(tabId, { url: `${url}&skip` });
-  return browser.tabs.update(tabId, { url, loadReplace: true });
+  if (!(await android)) return browser.tabs.update(tabId, { url, loadReplace: true });
+  const page = address ?? (await browser.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null))?.url;
+  if (page) caught.set(tabId, (caught.get(tabId) ?? new Set()).add(page));
+  return browser.tabs.update(tabId, { url: `${url}&skip` });
 }
+// android: the addresses per tab whose history entry stayed behind the porn page. the system back button lands on one
+// (firefox skips it only if the user never touched that page) and it would send the tab forward again, for good. so
+// back from the porn page steps over it. coming from anywhere else, it is a new visit
+const caught = new Map();
+async function stepOver(details) {
+  const { tabId } = details;
+  const page = await browser.webNavigation.getFrame({ tabId, frameId: 0 }).catch(() => null);
+  if (page?.url.startsWith(browser.runtime.getURL('porn/'))) browser.tabs.goBack(tabId);
+  else guard(details, false);
+}
+// each engine's own strict mode, on every results page. its adult pictures load as images, no navigation for guard()
+// to see, so this is what keeps them off. through the address, so no host permission and no longer install prompt
+// (chromium's safe_search_util for google's parameters, each engine's help pages; 2026-10). yandex and startpage
+// keep theirs in a cookie or a post, out of reach here
+const SAFE_SEARCH = [
+  [/^(www\.)?google\.(com?\.)?[a-z]{2,3}$/, /^\/(search|imgres)$/, { safe: 'active', ssui: 'on' }],
+  [/^((www|cn)\.)?bing\.com$/, /^\/(search|images\/|videos\/)/, { adlt: 'strict' }],
+  [/^((html|lite)\.)?duckduckgo\.com$/, /^\/((html|lite)\/?)?$/, { kp: '1' }],
+  [/^search\.brave\.com$/, /^\/(search|images|videos|news)/, { safesearch: 'strict' }],
+];
+const forced = new Map(); // per tab, the last address this sent it to and when
 // every top-level navigation, before it loads and again once it commits: a redirect (a link shortener, an alias
 // domain) shows its real address only then. a frame (reddit's redgifs players) counts once it commits: firefox
 // reports a frame's onBeforeNavigate before a blocker (ublock origin, tracking protection) can cancel its request,
@@ -208,14 +237,32 @@ function guard({ frameId, tabId, url }, committed) {
   // a site's cookies, or to keep a short intranet name from being completed
   const host = u.hostname.replace(/\.+$/, '');
   const named = untranslated(u, host);
-  if (isPorn(named)) return toPorn(tabId, { host: named }, committed);
-  if (frameId === 0 && host !== u.hostname && onSites(host)) {
-    u.hostname = host;
-    return browser.tabs.update(tabId, { url: u.href });
-  }
+  if (isPorn(named)) return toPorn(tabId, { host: named }, committed, frameId === 0 ? url : undefined);
+  if (frameId !== 0) return undefined;
+  const strict = SAFE_SEARCH.find(([hosts, paths]) => hosts.test(host) && paths.test(u.pathname))?.[2] ?? {};
+  const loose = Object.entries(strict).filter(([key, value]) => u.searchParams.get(key) !== value);
+  const dotted = host !== u.hostname && onSites(host);
+  if (!loose.length && !dotted) return undefined;
+  if (dotted) u.hostname = host;
+  for (const [key, value] of loose) u.searchParams.set(key, value);
+  // an engine that drops the parameter on its way must not make this go round forever. the same search typed again
+  // later is forced again
+  const last = forced.get(tabId);
+  if (last?.href === u.href && Date.now() - last.at < 2000) return undefined;
+  forced.set(tabId, { href: u.href, at: Date.now() });
+  return browser.tabs.update(tabId, { url: u.href });
 }
-browser.webNavigation.onBeforeNavigate.addListener((details) => details.frameId === 0 && guard(details, false));
-browser.webNavigation.onCommitted.addListener((details) => guard(details, true));
+browser.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId !== 0) return;
+  if (caught.get(details.tabId)?.has(details.url)) stepOver(details);
+  else guard(details, false);
+});
+browser.webNavigation.onCommitted.addListener((details) => {
+  // back that restored the page without a load before it (the back-forward cache)
+  const back = details.frameId === 0 && details.transitionQualifiers?.includes('forward_back') && caught.get(details.tabId)?.has(details.url);
+  if (back) browser.tabs.goBack(details.tabId);
+  else guard(details, true);
+});
 // navigations made before this page ran sent no event, and nothing queues them: at app startup firefox starts a
 // persistent background page only after session restore, after android reclaimed the extension process only
 // once firefox is back on screen (ext-backgroundPage.js; webNavigation is not startup-blocking, ext-toolkit.json;

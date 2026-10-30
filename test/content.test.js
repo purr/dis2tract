@@ -1662,8 +1662,10 @@ test('background: theme pairs become a document_start stylesheet and a storage m
       onMessage: { addListener: (f) => (on.message = f) },
       openOptionsPage() {},
       setUninstallURL: (url) => (on.farewell = url),
+      onInstalled: { addListener: (f) => (on.installed = f) },
     },
     webNavigation: {
+      getFrame: async () => ({ url: shown }),
       onBeforeNavigate: { addListener: (f) => (on.navigate = f) },
       onCommitted: { addListener: (f) => (on.committed = f) },
       onHistoryStateUpdated: { addListener: (f, filter) => Object.assign(on, { history: f, historyFilter: filter }) },
@@ -1683,6 +1685,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
       },
       sendMessage: async (tabId, message, options) => reported.push([tabId, message.url, options.frameId]),
       query: async () => Object.keys(open).map((id) => ({ id: Number(id) })),
+      goBack: async (tabId) => wentBack.push(tabId),
     },
     browserAction: { onClicked: { addListener: (f) => (on.click = f) } },
     contentScripts: {
@@ -1722,6 +1725,8 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     return { ok: true, text: async () => download };
   };
   const clock = { now: NOON };
+  const wentBack = []; // tabs.goBack
+  let shown = 'porn/porn.html'; // the tab's page, as webNavigation.getFrame answers
   const timeouts = []; // run by hand, when the test lets that time pass
   const background = (withTheme) => {
     const ctx = vm.createContext({
@@ -1777,6 +1782,43 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     ['https://1-0-----16pw588q-com.translate.goog/?_x_tr_enc=0,1', 'xn----16pw588q.com'],
     ['https://g5h3969ntadg44juhyah3c9aza87iiar4i410avdl8d3f1fuq3nz05dg5b-com.translate.goog/?_x_tr_enc=0&_x_tr_hp=0-', 'xn--g5h3969ntadg44juhyah3c9aza87iiar4i410avdl8d3f1fuq3nz05dg5b.com'],
   ]) assert.equal(untranslated(url), host, url);
+  // a listed site's media host, which the list leaves out, opened at its own address
+  sent.length = 0;
+  on.navigate({ frameId: 0, tabId: 40, url: 'https://ei.phncdn.com/videos/a.jpg' });
+  await settle();
+  assert.deepEqual(sent, [[40, 'porn/porn.html?host=ei.phncdn.com']]);
+  // each search engine's strict mode, once; a frame, and a page that is no search, are left alone
+  sent.length = 0;
+  for (const [tabId, url] of [
+    [41, 'https://www.google.com/search?q=a&udm=2&safe=off'],
+    [42, 'https://www.google.co.uk/search?q=a'],
+    [43, 'https://www.bing.com/images/search?q=a'],
+    [44, 'https://duckduckgo.com/?q=a&ia=images'],
+    [45, 'https://search.brave.com/images?q=a'],
+  ]) on.navigate({ frameId: 0, tabId, url });
+  on.navigate({ frameId: 3, tabId: 46, url: 'https://www.google.com/search?q=a' });
+  on.navigate({ frameId: 0, tabId: 47, url: 'https://www.google.com/maps' });
+  on.navigate({ frameId: 0, tabId: 48, url: 'https://www.bing.com/search?q=a&adlt=strict' });
+  assert.deepEqual(sent, [
+    [41, 'https://www.google.com/search?q=a&udm=2&safe=active&ssui=on'],
+    [42, 'https://www.google.co.uk/search?q=a&safe=active&ssui=on'],
+    [43, 'https://www.bing.com/images/search?q=a&adlt=strict'],
+    [44, 'https://duckduckgo.com/?q=a&ia=images&kp=1'],
+    [45, 'https://search.brave.com/images?q=a&safesearch=strict'],
+  ]);
+  // an engine that drops the parameter on its way does not go round forever; the same search later is forced again
+  sent.length = 0;
+  on.committed({ frameId: 0, tabId: 42, url: 'https://www.google.co.uk/search?q=a' });
+  assert.deepEqual(sent, []);
+  clock.now += 5000;
+  on.navigate({ frameId: 0, tabId: 42, url: 'https://www.google.co.uk/search?q=a' });
+  assert.deepEqual(sent, [[42, 'https://www.google.co.uk/search?q=a&safe=active&ssui=on']]);
+  // a new install opens the settings once; an update does not
+  let opened = 0;
+  vm.runInContext('browser', bg).runtime.openOptionsPage = () => { opened += 1; };
+  on.installed({ reason: 'update' });
+  on.installed({ reason: 'install' });
+  assert.equal(opened, 1);
   // a trailing dot on one of the sites: the same address without it, where the rules apply. other sites keep it
   sent.length = 0;
   on.navigate({ frameId: 0, tabId: 14, url: 'https://x.com./home' });
@@ -1885,6 +1927,16 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.deepEqual(sent, [[7, 'porn/porn.html?host=example.test'], [9, 'porn/porn.html?host=example.test&skip']]);
   assert.equal(played.length, 0);
   assert.equal(saved.pornList.domains.length, 1002);
+  // back from the porn page onto the caught page steps over it, loaded or restored; from anywhere else it is a new visit
+  sent.length = 0;
+  on.navigate({ frameId: 0, tabId: 9, url: 'https://example.test/' });
+  await settle();
+  on.committed({ frameId: 0, tabId: 9, url: 'https://example.test/', transitionQualifiers: ['forward_back'] });
+  assert.deepEqual([wentBack, sent], [[9, 9], []]);
+  shown = 'https://other.test/';
+  on.navigate({ frameId: 0, tabId: 9, url: 'https://example.test/' });
+  await settle();
+  assert.deepEqual(sent, [[9, 'porn/porn.html?host=example.test']]);
 });
 
 test('background: an adult mark counts only on the item the tab\'s address names, and a marked answer never reaches the page', async () => {
@@ -1900,6 +1952,7 @@ test('background: an adult mark counts only on the item the tab\'s address names
       getURL: (p) => p,
       getPlatformInfo: async () => ({ os: 'win' }),
       onMessage: { addListener() {} },
+      onInstalled: { addListener() {} },
       setUninstallURL() {},
     },
     webNavigation: { onBeforeNavigate: { addListener() {} }, onCommitted: { addListener() {} }, onHistoryStateUpdated: { addListener() {} } },
