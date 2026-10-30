@@ -69,8 +69,13 @@ jobs:
     env:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      # actions pinned to commits: this job holds the signing keys and write access, so a moved tag must not run here
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # no write token left on disk for the later steps (web-ext's npm packages among them): nothing here runs
+          # git, and the release action takes its own
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -89,7 +94,6 @@ jobs:
       - name: release notes
         # the lines under "## <version>", up to the next version's heading
         run: awk -v head="## $VERSION" '/^## / { if (on) exit; on = ($0 == head); next } on' CHANGELOG.md > notes.md
-      # pinned to a commit: this job holds the signing keys and write access, so a moved tag must not run here
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ env.VERSION }}
