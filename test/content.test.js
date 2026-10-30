@@ -1883,13 +1883,13 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const themed = () => JSON.parse(JSON.stringify(saved.theme));
   assert.deepEqual(
     themed(),
-    { '--d2t-bg': '#0a141e', '--d2t-fg': '#ffffff', '--d2t-card': '#0a141e', '--d2t-card-fg': '#ffffff', '--d2t-accent': '#00aaff' },
-    'the field pair has a crafted value, so fields fall back to the page pair; a var() focus color is no color',
+    { '--d2t-bg': '#0a141e', '--d2t-fg': '#ffffff', '--d2t-card': '#ff0000', '--d2t-card-fg': '#000000', '--d2t-accent': '#ffffff', '--d2t-mute': '70%', '--d2t-card-mute': '80%' },
+    'a crafted field text goes nowhere: the field keeps its background and takes black; a var() focus color is no color, and the tab accent does not read on that field',
   );
   assert.equal(registered.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(registered[0].options)), {
     matches: ['*://x.com/*'],
-    css: [{ code: 'html #dis2tract-host:not([data-live]) { --d2t-bg: #0a141e; --d2t-fg: #ffffff; --d2t-card: #0a141e; --d2t-card-fg: #ffffff; --d2t-accent: #00aaff; }' }],
+    css: [{ code: 'html #dis2tract-host:not([data-live]) { --d2t-bg: #0a141e; --d2t-fg: #ffffff; --d2t-card: #ff0000; --d2t-card-fg: #000000; --d2t-accent: #ffffff; --d2t-mute: 70%; --d2t-card-mute: 80%; }' }],
     runAt: 'document_start',
   });
   // a translucent field goes out as it shows over the page, so the unlock sheet never lets the block screen through.
@@ -1897,18 +1897,36 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   current = { colors: { frame: '#000', tab_background_text: '#fff', toolbar_field: 'rgba(255, 255, 255, 0.9)', toolbar_field_text: '#000', tab_line: '#0af' } };
   on.updated();
   await settle();
-  assert.deepEqual(themed(), { '--d2t-bg': '#000000', '--d2t-fg': '#ffffff', '--d2t-card': '#e6e6e6', '--d2t-card-fg': '#000000', '--d2t-accent': '#6e6e6e' });
-  // firefox color's default preset: white on light blue, 2.2:1, so the default palette stays
+  assert.deepEqual(themed(), { '--d2t-bg': '#000000', '--d2t-fg': '#ffffff', '--d2t-card': '#e6e6e6', '--d2t-card-fg': '#000000', '--d2t-accent': '#6e6e6e', '--d2t-mute': '70%', '--d2t-card-mute': '70%' });
+  // a theme's background always stays. firefox color's default preset, white on light blue at 2.2:1: its text gives way
   current = { colors: { frame: 'rgb(142, 179, 201)', tab_background_text: '#fff' } };
   on.updated();
   await settle();
-  assert.deepEqual(themed(), {});
-  assert.equal(registered.length, 2, 'nothing to register for an unreadable theme');
+  assert.equal(themed()['--d2t-bg'], '#8eb3c9');
+  assert.equal(themed()['--d2t-fg'], '#000000');
+  // white on mid blue reads at 5.3:1, but its 70% muted mix doesn't: the colors stay, the muted text is stronger
+  current = { colors: { frame: '#3a6ea5', tab_background_text: '#ffffff' } };
+  on.updated();
+  await settle();
+  assert.equal(themed()['--d2t-bg'], '#3a6ea5');
+  assert.equal(themed()['--d2t-fg'], '#ffffff');
+  assert.equal(themed()['--d2t-mute'], '90%');
+  // a background and no text color
+  current = { colors: { frame: '#102030' } };
+  on.updated();
+  await settle();
+  assert.equal(themed()['--d2t-fg'], '#ffffff');
+  assert.equal(registered.length, 5, 'each of them is registered');
+  current = { colors: { frame: 'var(--x)', tab_background_text: '#fff' } };
+  on.updated();
+  await settle();
+  assert.deepEqual(themed(), {}, 'no background that is a color, no theme');
+  assert.equal(registered.length, 5, 'nothing to register without one');
   current = { colors: null }; // switched to a theme without colors
   on.updated();
   await settle();
   assert.ok(registered.every((r) => r.gone), 'the old stylesheets are unregistered');
-  assert.equal(registered.length, 2, 'nothing to register for a colorless theme');
+  assert.equal(registered.length, 5, 'nothing to register for a colorless theme');
   assert.deepEqual(themed(), {});
   assert.equal(typeof on.click, 'function', 'the toolbar button opens the settings');
   assert.match(on.farewell, /^https:\/\/[^#?]+$/, 'a plain https page, nothing about the user appended');

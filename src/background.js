@@ -3,7 +3,8 @@
 // firefox injects at document_start, like the manifest css. a registration dies with the page that made it,
 // hence the persistent background. firefox for android has no theme api: there the default palette stays.
 // a theme's pairs are meant to contrast, but nothing checks it (firefox color's own default preset is white on light
-// blue, 2.2:1), so each pair is checked as the pages draw it, and taken whole or not at all
+// blue, 2.2:1), so each pair is checked as the pages draw it. a theme's backgrounds are always kept: dropping a pair
+// over its text threw out the colors of every mid-tone theme, for the default palette, with no word why
 const PAGE = [['--d2t-bg', 'frame'], ['--d2t-fg', 'tab_background_text']];
 const FIELD = [['--d2t-card', 'toolbar_field'], ['--d2t-card-fg', 'toolbar_field_text']];
 const ACCENT = ['toolbar_field_border_focus', 'tab_line']; // the theme's own focus ring color, else its tab accent
@@ -47,15 +48,20 @@ let registered = null;
 
 async function syncTheme() {
   const { colors } = await browser.theme.getCurrent();
-  // a pair as the pages draw it, or null: the page opaque (overlay.css drops its alpha), a field over the page,
-  // text over its background. readable: the 70% muted mix of the text (overlay.css) keeps 4.5:1 for small text
+  // a pair as the pages draw it, or null without a background: the page opaque (overlay.css drops its alpha), a field
+  // over the page, text over its background. text under 4.5:1, or none, gives way to black or white: the better of
+  // the two reaches 4.58:1 on any background
   const pair = ([[, back], [, text]], under) => {
     const [b, t] = [rgba(colors?.[back]), rgba(colors?.[text])];
-    if (!b || !t) return null;
+    if (!b) return null;
     const bg = under ? over(b, under) : b.slice(0, 3);
-    const fg = over(t, bg);
-    return contrast(mix(fg, bg, 0.7), bg) >= 4.5 ? [bg, fg] : null;
+    const fg = t && over(t, bg);
+    if (fg && contrast(fg, bg) >= 4.5) return [bg, fg];
+    return [bg, contrast([0, 0, 0], bg) > contrast([255, 255, 255], bg) ? [0, 0, 0] : [255, 255, 255]];
   };
+  // how much of the text the muted color (overlay.css, options.css) needs to keep 4.5:1 for small text: 70% of it
+  // where that reads, the look the default palette has, else as little more as it takes
+  const mute = ([bg, fg]) => `${[70, 75, 80, 85, 90, 95, 100].find((share) => contrast(mix(fg, bg, share / 100), bg) >= 4.5)}%`;
   const next = {};
   const page = pair(PAGE);
   if (page) {
@@ -72,6 +78,8 @@ async function syncTheme() {
     PAGE.forEach(([name], i) => (next[name] = hex(page[i])));
     FIELD.forEach(([name], i) => (next[name] = hex(field[i])));
     next['--d2t-accent'] = hex(accent);
+    next['--d2t-mute'] = mute(page);
+    next['--d2t-card-mute'] = mute(field);
   }
   theme = next;
   await registered?.unregister();

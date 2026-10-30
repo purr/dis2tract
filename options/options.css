@@ -10,9 +10,10 @@
   /* ios's darker accessibility green, in both schemes: 4.4:1 against the white knob and the light card, 3.9:1
      against the dark card. the usual #34c759 and #30d158 left the knob at 2.2:1 and 2.0:1, under wcag 1.4.11's 3:1 */
   --d2t-on: #248a3d;
-  /* 70%: at least 4.5:1 for small text. text inside a card mixes from the card's own pair */
-  --d2t-muted: color-mix(in srgb, var(--d2t-fg) 70%, var(--d2t-bg));
-  --d2t-card-muted: color-mix(in srgb, var(--d2t-card-fg) 70%, var(--d2t-card));
+  /* 70%: at least 4.5:1 for small text, more where a theme needs it (background.js). text inside a card mixes from
+     the card's own pair */
+  --d2t-muted: color-mix(in srgb, var(--d2t-fg) var(--d2t-mute, 70%), var(--d2t-bg));
+  --d2t-card-muted: color-mix(in srgb, var(--d2t-card-fg) var(--d2t-card-mute, 70%), var(--d2t-card));
   --d2t-line: color-mix(in srgb, var(--d2t-fg) 13%, transparent);
   --d2t-ring: 0 0 0 4px color-mix(in srgb, var(--d2t-accent) 34%, transparent);
 }

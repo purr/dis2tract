@@ -25,8 +25,8 @@ var OVERLAY_CSS = `
 #dis2tract {
   /* 70%: at least 4.5:1 for small text, which background.js checks for a theme's pairs. the card has its own:
      muted text on a card mixed from the page colors fell to 1.2:1 under some themes */
-  --d2t-muted: color-mix(in srgb, var(--d2t-fg) 70%, var(--d2t-bg));
-  --d2t-card-muted: color-mix(in srgb, var(--d2t-card-fg) 70%, var(--d2t-card));
+  --d2t-muted: color-mix(in srgb, var(--d2t-fg) var(--d2t-mute, 70%), var(--d2t-bg));
+  --d2t-card-muted: color-mix(in srgb, var(--d2t-card-fg) var(--d2t-card-mute, 70%), var(--d2t-card));
   --d2t-line: color-mix(in srgb, var(--d2t-fg) 12%, transparent);
   --d2t-line-strong: color-mix(in srgb, var(--d2t-fg) 24%, transparent);
   --d2t-ease: cubic-bezier(0.4, 0, 0.2, 1);

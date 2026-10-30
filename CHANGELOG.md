@@ -2,6 +2,10 @@
 
 newest first. each version's section becomes its github release notes.
 
+## 0.8.1
+
+- your theme's colors are no longer thrown out whole when its text is hard to read: the backgrounds stay, and only the text changes
+
 ## 0.8.0
 
 - porn sites are blocked for good: before the site loads, the tab goes to a page in the block screen's look and theme colors, with a quote that stings, one of two meme clips and one better thing to do. no unlock, no switch
