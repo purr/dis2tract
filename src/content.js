@@ -423,7 +423,9 @@
   // time on social media today: any page of these sites while in use, never the block screen. background.js
   // counts the day's total for every tab from these notes, one per look
   function track() {
-    if (!overlay && inUse()) browser.runtime.sendMessage('use');
+    // a note background.js can't take (firefox stopped restarting it after repeated crashes) loses one look of the
+    // day's time; logging it would only fill the console every 400 ms
+    if (!overlay && inUse()) browser.runtime.sendMessage('use').catch(() => {});
   }
 
   // a wrong answer: what was wrong, a wait, then a new challenge, all in the same sheet. the wait is stored, so a
