@@ -231,8 +231,9 @@ test('manifest matches and host permissions cover exactly the hosts in SITES', (
   const hosts = Object.values(SITES).flatMap((s) => s.hosts);
   assert.deepEqual(matches.map((m) => new URL(m.replace('*://', 'https://')).hostname).sort(), [...hosts].sort());
   // background.js registers the theme stylesheet for the same matches, which needs them as host permissions; the
-  // only others are bluesky's data hosts, whose answers background.js reads for adult labels
-  const api = ['*://*.bsky.network/*', '*://public.api.bsky.app/*'];
+  // only others are bluesky's data hosts, whose answers background.js reads for adult labels, and the porn list's
+  // host, so its download carries no moz-extension origin
+  const api = ['*://*.bsky.network/*', '*://public.api.bsky.app/*', '*://raw.githubusercontent.com/*'];
   assert.deepEqual(manifest.permissions.filter((p) => p.includes('://')).sort(), [...matches, ...api].sort());
 });
 

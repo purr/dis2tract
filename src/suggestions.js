@@ -147,3 +147,11 @@ var URGES = [
   ]],
 ];
 var URGE_LATE = ['up late? this is when it wins.', [['phone away, lights off. now.'], ['10 minutes of yoga nidra, lying down', NIDRA]]];
+// and what set it off, above the buttons: the address and the list that names it, or the platform that marked
+// what the page loaded as adult itself. the list holds gore and shock sites too, hence nsfw, not porn
+var LISTED = 'is on the nsfw list. not today.';
+var MARKED = {
+  x: ['x itself marked this as adult.', 'not today.'],
+  reddit: ['reddit itself marked this nsfw.', 'not today.'],
+  bluesky: ['bluesky itself labeled this adult.', 'not today.'],
+};

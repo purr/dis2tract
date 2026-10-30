@@ -1502,32 +1502,130 @@ test('youtube links to your own channel without a handle', async () => {
   assert.ok(t.find((n) => n.tagName === 'A' && n.getAttribute('href') === '/profile'));
 });
 
-test('the porn page is built from the block screen\'s parts, look and theme', async () => {
+// a file the extension loads at runtime must not be left out of the package. web-ext reads every webExt.ignoreFiles
+// entry as a glob from the project root (* and ? within one name, ** across folders), and a folder left out takes
+// everything in it (web-ext's src/util/file-filter.js, zip-dir 2.0.0, 2026-10)
+const PKG = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+const GLOB = { '**/': '(.*/)?', '**': '.*', '*': '[^/]*', '?': '[^/]' };
+const glob = (f) => path.posix.normalize(f).replace(/\/$/, '').replace(/[.+^$(){}|\\]/g, '\\$&').replace(/\*\*\/|\*\*|\*|\?/g, (m) => GLOB[m]);
+const IGNORED = PKG.webExt.ignoreFiles.map((f) => new RegExp(`^${glob(f)}$`));
+const packed = (file) => !file.split('/').some((_, i, parts) => IGNORED.some((re) => re.test(parts.slice(0, i + 1).join('/'))));
+
+test('the porn page is built from the block screen\'s parts, look and theme, and says what set it off', async () => {
   const html = fs.readFileSync(path.join(__dirname, '../porn/porn.html'), 'utf8');
-  assert.deepEqual([...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]), ['../css/overlay.css', '../src/settings.js', '../src/ui.js', '../src/suggestions.js', 'porn.js']);
-  const doc = {};
-  Object.assign(doc, {
-    body: new El('body', doc),
-    // a video that plays; the rest of the fake dom stands in as usual
-    createElement: (t) => Object.assign(new El(t, doc), t === 'video' && { play: () => Promise.resolve() }),
-  });
-  const ctx = vm.createContext({
-    document: doc,
-    history: { length: 1 },
-    browser: { extension: { getBackgroundPage: () => ({ theme: { '--d2t-bg': '#123456' } }) }, tabs: {} },
-  });
-  for (const f of ['../src/settings.js', '../src/ui.js', '../src/suggestions.js', '../porn/porn.js']) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), ctx, { filename: f });
+  const refs = [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(refs, ['../css/overlay.css', '../src/settings.js', '../src/ui.js', '../src/suggestions.js', 'porn.js']);
+  // the page at an address (?host=, ?mark=, &skip from background.js). background: null in a private window
+  const open = (search, { background = { theme: { '--d2t-bg': '#123456' } }, stored = {}, length = 1, reduced = false, refuse = false, hidden = false } = {}) => {
+    const doc = {};
+    const played = [];
+    const went = []; // history.go() steps
+    const shown = []; // visibilitychange listeners
+    let changed;
+    Object.assign(doc, {
+      body: new El('body', doc),
+      visibilityState: hidden ? 'hidden' : 'visible',
+      addEventListener: (type, f) => type === 'visibilitychange' && shown.push(f),
+      createElement: (t) => {
+        const el = new El(t, doc);
+        // a video that plays, or with refuse only muted, as in a firefox set to block sound even on extension pages.
+        // removing the style attribute drops the theme painted into it
+        if (t === 'video') {
+          el.play = () => {
+            played.push(el.src);
+            return refuse && !el.muted ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve();
+          };
+        }
+        el.removeAttribute = (k) => {
+          if (k === 'style') el.style.props = {};
+          El.prototype.removeAttribute.call(el, k);
+        };
+        return el;
+      },
+    });
+    const ctx = vm.createContext({
+      document: doc,
+      URLSearchParams,
+      location: { search },
+      history: { length, go: (n) => went.push(n) },
+      matchMedia: (q) => ({ matches: reduced && q === '(prefers-reduced-motion: reduce)' }),
+      browser: {
+        extension: { getBackgroundPage: () => background },
+        tabs: {},
+        storage: { local: { get: async () => stored }, onChanged: { addListener: (f) => (changed = f) } },
+      },
+    });
+    for (const f of ['../src/settings.js', '../src/ui.js', '../src/suggestions.js', '../porn/porn.js']) {
+      vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), ctx, { filename: f });
+    }
+    const screen = doc.body.children[0];
+    const has = (cls) => screen.find((n) => n.getAttribute('class') === cls);
+    const button = (text) => screen.find((n) => n.tagName === 'BUTTON' && n.textContent === text);
+    // what set it off: the lines above the buttons
+    const why = has('d2t-unlock').find((n) => n.getAttribute('class') === 'd2t-sub')?.children.map((s) => s.textContent) ?? null;
+    const show = () => {
+      doc.visibilityState = 'visible';
+      for (const f of shown.splice(0)) f();
+    };
+    return { screen, has, button, why, played, went, ctx, show, change: (theme) => changed({ theme: { newValue: theme } }, 'local') };
+  };
+  const page = open('?host=www.example.test');
+  assert.equal(page.screen.getAttribute('id'), 'dis2tract');
+  assert.equal(page.screen.style.props['--d2t-bg'], '#123456', 'the firefox theme, like the block screen');
+  assert.equal(page.screen.find((n) => n.tagName === 'H2').textContent, 'no porn');
+  assert.ok(page.has('d2t-sub') && page.has('d2t-answer') && page.has('d2t-unlock'));
+  assert.equal(page.button('go back').hidden, true, 'nothing to go back to in a new tab');
+  // the clip plays at once, with its controls showing: firefox gives an extension page sound without a click
+  const clip = page.has('d2t-clip');
+  assert.equal(clip.getAttribute('controls'), '');
+  assert.deepEqual(page.played, [clip.src]);
+  // every clip the page picks from, not only today's pick: in the repo and in the package, like the page itself and
+  // every file it loads
+  const clips = vm.runInContext('CLIPS', page.ctx);
+  assert.ok(clips.includes(clip.src));
+  for (const file of ['porn/porn.html', ...refs.map((r) => path.posix.join('porn', r)), ...clips.map((c) => `porn/${c}`)]) {
+    assert.ok(fs.statSync(path.join(__dirname, '..', file)).size > 0, file);
+    assert.ok(packed(file), `${file} is left out of the package`);
   }
-  const screen = doc.body.children[0];
-  const has = (cls) => screen.find((n) => n.getAttribute('class') === cls);
-  assert.equal(screen.getAttribute('id'), 'dis2tract');
-  assert.equal(screen.style.props['--d2t-bg'], '#123456', 'the firefox theme, like the block screen');
-  assert.equal(screen.find((n) => n.tagName === 'H2').textContent, 'no porn');
-  assert.ok(has('d2t-sub') && has('d2t-answer') && has('d2t-unlock'));
-  const clip = has('d2t-clip');
-  assert.ok(fs.statSync(path.join(__dirname, '../porn', clip.src)).size > 0, clip.src);
-  assert.equal(screen.find((n) => n.textContent === 'go back').hidden, true, 'nothing to go back to in a new tab');
+  assert.ok(!packed('test/content.test.js') && !packed('docs/install.md'), 'the check sees what is left out');
+  // what set it off, in the voice of the quotes: 38 characters a line at most, the address on a line of its own
+  const LISTED = vm.runInContext('LISTED', page.ctx);
+  const MARKED = vm.runInContext('MARKED', page.ctx);
+  assert.deepEqual(page.why, ['www.example.test', LISTED]);
+  for (const mark of ['x', 'reddit', 'bluesky']) assert.deepEqual(open(`?mark=${mark}`).why, [...MARKED[mark]]);
+  for (const line of [LISTED, ...Object.values(MARKED).flat()]) assert.ok(line.length <= 38, `${line.length} characters: ${line}`);
+  assert.equal(open('?mark=__proto__').why, null, 'an unknown mark names nothing');
+  // go back: one step, or two where the caught page still sits right behind this one (android); never into it
+  const went = (search, length) => {
+    const p = open(search, { length });
+    if (!p.button('go back').hidden) p.button('go back').fire('click');
+    return p.went;
+  };
+  assert.deepEqual(went('?host=example.test', 2), [-1]);
+  assert.deepEqual(went('?host=example.test&skip', 2), [], 'only the caught page behind it: nothing to go back to');
+  assert.deepEqual(went('?mark=reddit&skip', 3), [-2]);
+  // a private window has no background page: the theme comes from storage, and every later change follows
+  const priv = open('?mark=x', { background: null, stored: { theme: { '--d2t-bg': '#654321' } } });
+  await settle();
+  assert.equal(priv.screen.style.props['--d2t-bg'], '#654321');
+  priv.change({ '--d2t-fg': '#ffffff' });
+  assert.deepEqual(priv.screen.style.props, { '--d2t-fg': '#ffffff' }, 'colors of the old theme are dropped');
+  // reduced motion: the clip waits for its play button
+  const still = open('?mark=x', { reduced: true });
+  assert.deepEqual(still.played, []);
+  assert.equal(still.has('d2t-clip').getAttribute('controls'), '');
+  // a tab sent here while hidden: the clip starts once the tab is shown, not out of sight
+  const away = open('?host=example.test', { hidden: true });
+  assert.deepEqual(away.played, []);
+  away.show();
+  assert.deepEqual(away.played, [away.has('d2t-clip').src]);
+  // sound refused: the clip plays muted, and its controls bring the sound back
+  const hushed = open('?mark=x', { refuse: true });
+  await settle();
+  const muted = hushed.has('d2t-clip');
+  assert.deepEqual(hushed.played, [muted.src, muted.src]);
+  assert.equal(muted.muted, true);
+  assert.equal(muted.getAttribute('controls'), '');
 });
 
 test('background: theme pairs become a document_start stylesheet and a storage mirror; bad colors are dropped', async () => {
@@ -1536,10 +1634,23 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const registered = [];
   const on = {};
   const played = [];
-  const sent = []; // tabs sent elsewhere: [tabId, url]
+  const sent = []; // tabs sent elsewhere: [tabId, url], and 'replace' when the url takes the place of the current entry
   const reported = []; // history changes passed on to a tab: [tabId, url, frameId]
   const watched = []; // webRequest listeners: { f, filter, extra }
   const streams = {}; // response filters by request id
+  // tabs open before the background page runs, with their frames: a listed page, a listed player inside another
+  // site after a frame that has shown nothing yet (no url), a tab closed meanwhile (getAllFrames rejects) and a
+  // discarded one (no frames)
+  const open = {
+    20: [{ frameId: 0, parentFrameId: -1, url: 'https://example.test/videos' }],
+    21: [
+      { frameId: 0, parentFrameId: -1, url: 'https://news.test/' },
+      { frameId: 4, parentFrameId: 0 },
+      { frameId: 5, parentFrameId: 0, url: 'https://example.test/embed/2' },
+    ],
+    22: 'closed',
+    23: null,
+  };
   class Audio {
     constructor(src) { this.src = src; }
     play() { played.push(this.src); }
@@ -1548,6 +1659,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     runtime: {
       getManifest: () => ({ content_scripts: [{ matches: ['*://x.com/*'] }] }),
       getURL: (p) => p,
+      getPlatformInfo: async () => ({ os: withTheme ? 'win' : 'android' }), // android: the one without a theme api
       onMessage: { addListener: (f) => (on.message = f) },
       openOptionsPage() {},
       setUninstallURL: (url) => (on.farewell = url),
@@ -1556,14 +1668,22 @@ test('background: theme pairs become a document_start stylesheet and a storage m
       onBeforeNavigate: { addListener: (f) => (on.navigate = f) },
       onCommitted: { addListener: (f) => (on.committed = f) },
       onHistoryStateUpdated: { addListener: (f, filter) => Object.assign(on, { history: f, historyFilter: filter }) },
+      getAllFrames: async ({ tabId }) => {
+        if (open[tabId] === 'closed') throw new Error(`no tab with id ${tabId}`);
+        return open[tabId];
+      },
     },
     webRequest: {
       onBeforeRequest: { addListener: (f, filter, extra) => watched.push({ f, filter, extra }) },
       filterResponseData: (requestId) => (streams[requestId] = { written: [], write(d) { this.written.push(d); }, close() { this.closed = true; } }),
     },
     tabs: {
-      update: (tabId, { url }) => sent.push([tabId, url]),
+      update: (tabId, { url, loadReplace }) => {
+        sent.push(loadReplace ? [tabId, url, 'replace'] : [tabId, url]);
+        if (Array.isArray(open[tabId])) open[tabId] = [{ frameId: 0, parentFrameId: -1, url: `moz-extension://d2t/${url}` }]; // shown now
+      },
       sendMessage: async (tabId, message, options) => reported.push([tabId, message.url, options.frameId]),
+      query: async () => Object.keys(open).map((id) => ({ id: Number(id) })),
     },
     browserAction: { onClicked: { addListener: (f) => (on.click = f) } },
     contentScripts: {
@@ -1595,40 +1715,73 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     },
   };
   const document = { createElement: () => ({ getContext: () => context2d }) };
-  // the porn list download: oisd's format, a comment and one domain per line
-  let download = `# oisd nsfw small\n${Array.from({ length: 1000 }, (_, i) => `site${i}.test`).join('\n')}\nexample.test\n`;
-  const fetched = [];
-  const fetch = async (url) => {
-    fetched.push(url);
+  // the porn list download: oisd's format, a comment and one domain per line. co.cz is a public suffix it names
+  let download = `# oisd nsfw small\n${Array.from({ length: 1000 }, (_, i) => `site${i}.test`).join('\n')}\nexample.test\nco.cz\n`;
+  const fetched = []; // { url, ...options }
+  const fetch = async (url, options) => {
+    fetched.push({ url, ...options });
     return { ok: true, text: async () => download };
   };
   const clock = { now: NOON };
   const timeouts = []; // run by hand, when the test lets that time pass
   const background = (withTheme) => {
     const ctx = vm.createContext({
-      browser: fakeBrowser(withTheme), document, console, Audio, URL, TextDecoder, fetch,
+      browser: fakeBrowser(withTheme), document, console, Audio, URL, URLSearchParams, TextDecoder, fetch,
       setInterval: () => 0, setTimeout: (f) => timeouts.push(f), Date: class extends Date { static now() { return clock.now; } },
     });
     vm.runInContext(read('background.js'), ctx, { filename: 'background.js' });
     return ctx;
   };
-  background(true);
+  const bg = background(true);
   await settle();
-  // porn: a top-level load of a listed site or any subdomain of it goes to the extension's page
-  assert.equal(new URL(fetched[0]).hostname, 'raw.githubusercontent.com', 'a host that lets any origin read it');
-  assert.equal(saved.pornList.domains.length, 1001, 'kept for offline starts');
+  // porn: the list comes from a host the manifest grants, so firefox sends the download as the extension's own,
+  // without the moz-extension origin (this install's id) a cross-origin request carries, and with no cookies
+  assert.equal(new URL(fetched[0].url).hostname, 'raw.githubusercontent.com');
+  assert.ok(JSON.parse(fs.readFileSync(path.join(__dirname, '../manifest.json'), 'utf8')).permissions.includes('*://raw.githubusercontent.com/*'));
+  assert.equal(fetched[0].credentials, 'omit');
+  assert.equal(saved.pornList.domains.length, 1002, 'kept for offline starts');
+  // tabs already open when the list came in are checked too: a listed page, and a listed player inside a page
+  assert.deepEqual(sent.sort(([a], [b]) => a - b), [20, 21].map((tab) => [tab, 'porn/porn.html?host=example.test', 'replace']));
+  sent.length = 0;
+  // a top-level load of a listed site or any subdomain of it goes to the extension's page before it loads, so back
+  // leads to the page before. a page caught once committed (a redirect, a page with a listed frame) is replaced
   on.navigate({ frameId: 0, tabId: 7, url: 'https://www.example.test/videos' });
-  on.navigate({ frameId: 3, tabId: 8, url: 'https://example.test/embed/1' }); // a player inside another site
+  on.navigate({ frameId: 3, tabId: 8, url: 'https://example.test/embed/1' }); // a frame starting: a blocker may still cancel it
+  on.committed({ frameId: 3, tabId: 8, url: 'https://example.test/embed/1' }); // the player inside another site, loaded
   on.committed({ frameId: 0, tabId: 9, url: 'https://example.test/' }); // where a short link redirected to
   on.navigate({ frameId: 0, tabId: 10, url: 'https://example.test./' }); // a trailing dot
   on.navigate({ frameId: 0, tabId: 11, url: 'https://anything.xxx/' }); // an adult top-level domain
   on.navigate({ frameId: 0, tabId: 12, url: 'https://notexample.test/' }); // only a look-alike name
   on.navigate({ frameId: 0, tabId: 13, url: 'about:blank' });
-  assert.deepEqual(sent, [7, 8, 9, 10, 11].map((tab) => [tab, 'porn/porn.html']));
-  assert.ok(fs.statSync(path.join(__dirname, '..', sent[0][1])).size > 0);
-  // a trailing dot on any other site: the same address without it, where the rules apply
-  on.navigate({ frameId: 0, tabId: 14, url: 'https://www.tiktok.com./foryou' });
-  assert.deepEqual(sent.at(-1), [14, 'https://www.tiktok.com/foryou']);
+  on.committed({ frameId: 0, tabId: 15, url: 'https://www-example-test.translate.goog/?_x_tr_sl=auto&_x_tr_tl=en' }); // google translate's copy
+  on.navigate({ frameId: 0, tabId: 16, url: 'https://test.translate.goog/?_x_tr_hp=example-' }); // its form for long names
+  on.committed({ frameId: 0, tabId: 17, url: 'https://www-notexample-test.translate.goog/' }); // a copy of a site not listed
+  on.navigate({ frameId: 0, tabId: 18, url: 'https://shop.co.cz/' }); // under a public suffix the list names
+  await settle();
+  assert.deepEqual(sent.sort(([a], [b]) => a - b), [
+    [7, 'porn/porn.html?host=www.example.test'],
+    [8, 'porn/porn.html?host=example.test', 'replace'],
+    [9, 'porn/porn.html?host=example.test', 'replace'],
+    [10, 'porn/porn.html?host=example.test'],
+    [11, 'porn/porn.html?host=anything.xxx'],
+    [15, 'porn/porn.html?host=www.example.test', 'replace'],
+    [16, 'porn/porn.html?host=example.test'],
+  ]);
+  assert.ok(fs.statSync(path.join(__dirname, '../porn/porn.html')).size > 0);
+  // more of google's own decoding examples (developers.google.com/search/docs/appearance/ad-network-and-translation):
+  // a doubled '-', internationalized names (0-, their xn-- dropped), a leading 1-, a long name's start in _x_tr_hp
+  const untranslated = (url) => vm.runInContext('untranslated', bg)(new URL(url), new URL(url).hostname);
+  for (const [url, host] of [
+    ['https://foo--example-com.translate.goog/', 'foo-example.com'],
+    ['https://0-57hw060o-com.translate.goog/?_x_tr_enc=0', 'xn--57hw060o.com'],
+    ['https://1-0-----16pw588q-com.translate.goog/?_x_tr_enc=0,1', 'xn----16pw588q.com'],
+    ['https://g5h3969ntadg44juhyah3c9aza87iiar4i410avdl8d3f1fuq3nz05dg5b-com.translate.goog/?_x_tr_enc=0&_x_tr_hp=0-', 'xn--g5h3969ntadg44juhyah3c9aza87iiar4i410avdl8d3f1fuq3nz05dg5b.com'],
+  ]) assert.equal(untranslated(url), host, url);
+  // a trailing dot on one of the sites: the same address without it, where the rules apply. other sites keep it
+  sent.length = 0;
+  on.navigate({ frameId: 0, tabId: 14, url: 'https://x.com./home' });
+  on.navigate({ frameId: 0, tabId: 19, url: 'https://news.example./' });
+  assert.deepEqual(sent, [[14, 'https://x.com/home']]);
   // adult labels in what x, reddit and bluesky load: the data reaches the page untouched, and the tab goes to the
   // porn page. each answer arrives split, the way a response streams in
   const encode = (s) => new TextEncoder().encode(s);
@@ -1666,8 +1819,10 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.deepEqual(reported, [[7, 'https://x.com/home', 0]]);
   sent.length = 0;
   on.message('something else');
-  on.message('chime');
-  assert.equal(played.length, 1, 'the chime, and only on its own message');
+  on.message('chime', { tab: { mutedInfo: { muted: true } } }); // a tab the user muted
+  on.message('chime', { tab: { mutedInfo: { muted: false } } });
+  await settle();
+  assert.equal(played.length, 1, 'the chime, only on its own message and never for a muted tab');
   // a private window's run of items is kept in memory, never written to storage
   const before = JSON.stringify(saved);
   on.message({ trail: 'trail:youtube', value: { chain: ['a', 'b'], at: NOON } });
@@ -1675,9 +1830,8 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.equal(await on.message({ getTrail: 'trail:x' }), null);
   assert.equal(JSON.stringify(saved), before, 'nothing on disk');
   // the file it plays is in the repo and in the package
-  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
   assert.ok(fs.statSync(path.join(__dirname, '..', played[0])).size > 0, played[0]);
-  assert.ok(!pkg.webExt.ignoreFiles.some((f) => played[0] === f || played[0].startsWith(`${f}/`)), 'not left out of the package');
+  assert.ok(packed(played[0]), 'not left out of the package');
   // time on social media: the time between notes from any tabs under 2 s apart, one writer, each day from zero
   const look = (ms) => {
     clock.now += ms;
@@ -1736,10 +1890,23 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   saved.pornList.at -= 86_400_000;
   download = 'one.test\n';
   sent.length = 0;
+  played.length = 0;
+  open[20] = [{ frameId: 0, parentFrameId: -1, url: 'https://example.test/videos' }]; // tabs restored at the next start
+  open[21] = [{ frameId: 0, parentFrameId: -1, url: 'https://shop.co.cz/' }];
   background(false);
   await settle();
   assert.equal(fetched.length, 2);
+  // android cannot replace a history entry: a page caught once committed stays behind the porn page, which is told
+  // to step over it. the open tabs are checked from the stored copy, its exceptions included
+  assert.deepEqual(sent, [[20, 'porn/porn.html?host=example.test&skip']]);
+  sent.length = 0;
   on.navigate({ frameId: 0, tabId: 7, url: 'https://example.test/' });
-  assert.deepEqual(sent, [[7, 'porn/porn.html']]);
-  assert.equal(saved.pornList.domains.length, 1001);
+  on.committed({ frameId: 0, tabId: 9, url: 'https://example.test/' });
+  on.navigate({ frameId: 0, tabId: 18, url: 'https://shop.co.cz/' });
+  // and no chime there: it would stop audio playing in other tabs
+  on.message('chime', { tab: { mutedInfo: { muted: false } } });
+  await settle();
+  assert.deepEqual(sent, [[7, 'porn/porn.html?host=example.test'], [9, 'porn/porn.html?host=example.test&skip']]);
+  assert.equal(played.length, 0);
+  assert.equal(saved.pornList.domains.length, 1002);
 });

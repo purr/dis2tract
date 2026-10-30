@@ -86,11 +86,20 @@ async function syncTheme() {
 }
 
 browser.browserAction.onClicked.addListener(() => browser.runtime.openOptionsPage());
+// firefox for android differs twice here. it lets one tab sound at a time and counts this page as a tab
+// (media.audioFocus.management, on only there), so the bell would stop audio playing in other tabs, and nothing
+// there tells whether one is. and its tabs.update has no loadReplace: its schema rejects the property, and with
+// it the whole call (mobile/shared/components/extensions/schemas/tabs.json, 2026-10)
+const android = browser.runtime.getPlatformInfo().then(({ os }) => os === 'android');
 // the 6 am bell from five nights at freddy's, when a content script reports a block appearing. played here, not
 // in the page: a page could learn the moz-extension url, whose id is random per browser and so a tracking handle.
-// extension pages may sound without a click (media.autoplay.allow-extension-background-pages, on by default)
-browser.runtime.onMessage.addListener((message) => {
-  if (message === 'chime') new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
+// extension pages may sound without a click (media.autoplay.allow-extension-background-pages, on by default).
+// a muted tab stays quiet: its mute silences its own media only, never this page, where the bell plays
+async function chime(tab) {
+  if (!tab?.mutedInfo?.muted && !(await android)) new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
+}
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (message === 'chime') chime(sender.tab);
   else if (message === 'use') countUse();
   else if (message?.trail) privateTrails.set(message.trail, message.value);
   else if (message?.getTrail) return Promise.resolve(privateTrails.get(message.getTrail) ?? null);
@@ -124,49 +133,105 @@ function saveUsage() {
   }).catch((e) => console.error('dis2tract: time on social media not saved', e));
 }
 // porn sites: no feed rules, no unlock. the tab leaves for the extension's own page before the site loads.
-// the list is oisd's nsfw small (the porn sites among the top million domains, maintained, few false hits),
-// downloaded here, not kept in the repo: it stays current, and no hand-picked list of sites is published.
-// github serves it to any origin, so no host permission; it is gpl, and this way it is never redistributed.
-// fetched once a day; the last good copy stays in storage, so an offline start still blocks
+// the list is oisd's nsfw small: the nsfw sites among the top million domains, porn, adult, shock and gore alike
+// (oisd.nl, 2026-10). it does not say which is which, so every one of them gets the porn page. downloaded here,
+// not kept in the repo: it stays current, and no hand-picked list of sites is published; it is gpl, and this way
+// it is never redistributed. fetched once a day; the last good copy stays in storage, so an offline start still
+// blocks. the manifest grants raw.githubusercontent.com for this download alone: without it the fetch is a cors
+// request, which firefox sends with Origin: moz-extension://<this install's id>, the same handle on the user
+// every day (bug 1405971; firefox's test_ext_secfetch.js, 2026-10). an anonymous xhr (mozAnon) sends it too: it
+// only leaves out cookies (XMLHttpRequestMainThread.cpp, nsCORSListenerProxy.cpp, 2026-10)
 const PORN_LIST = 'https://raw.githubusercontent.com/sjhgvr/oisd/main/domainswild2_nsfw_small.txt';
 // the adult top-level domains, which the list also names whole. kept here rather than taken from the download:
 // a single word from a download (a broken line saying "com") would block the whole web
 const ADULT_TLDS = ['xxx', 'porn', 'sex', 'adult'];
+// list entries that are not porn sites, and porn has no unlock or switch: web fiction platforms (17k.com,
+// zongheng.com), sofia's public transport (sofiatraffic.bg), the preview addresses of hosting tools (sslip.io:
+// coolify; cpanel.site: cpanel), and public suffixes, which would block every site registered under them (co.cz,
+// in.net, mex.com; publicsuffix.org). all on the list on 2026-10-30
+const NOT_PORN = ['17k.com', 'zongheng.com', 'sofiatraffic.bg', 'sslip.io', 'cpanel.site', 'co.cz', 'in.net', 'mex.com'];
 const DAY = 86_400_000;
-let porn = new Set(ADULT_TLDS);
+// the download and the stored copy both go through here, so an exception holds from the first start after an update
+const pornSet = (domains) => new Set([...ADULT_TLDS, ...domains.filter((d) => !NOT_PORN.includes(d))]);
+let porn = pornSet([]);
 let pornAt = 0;
 
 async function updatePorn() {
   if (Date.now() - pornAt < DAY) return;
-  const response = await fetch(PORN_LIST, { cache: 'no-store' });
+  // no cookies: with the host permission the download counts as the extension's own, which would send them
+  const response = await fetch(PORN_LIST, { cache: 'no-store', credentials: 'omit' });
   if (!response.ok) throw new Error(`http ${response.status}`);
   // one domain per line, each covering its subdomains; comments start with #
   const domains = (await response.text()).split('\n').map((line) => line.trim()).filter((line) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(line));
   // a cut-off or changed download must not replace a good list
   if (domains.length < 1000) throw new Error(`only ${domains.length} domains in the download`);
-  porn = new Set([...ADULT_TLDS, ...domains]);
+  porn = pornSet(domains);
   pornAt = Date.now();
+  recheck(); // sites the update added
   await browser.storage.local.set({ pornList: { at: pornAt, domains } });
 }
 
 // the host or any domain above it: www.example.com is caught by example.com
 const isPorn = (host) => host.split('.').some((_, i, parts) => porn.has(parts.slice(i).join('.')));
-// every navigation, in any frame: a page that embeds a listed site (reddit's redgifs players) goes to the porn page
-// too. checked again once the page commits: a redirect (a link shortener, an alias domain) shows its real address
-// only then, onBeforeNavigate sees the first one
-function guard({ frameId, tabId, url }) {
+// google translate's website proxy shows any site under a host of its own: www-example-com.translate.goog ('.'
+// made '-', '-' doubled), the start of a long name moved into _x_tr_hp. decoded as google documents it
+// (developers.google.com/search/docs/appearance/ad-network-and-translation, 2026-10), for the list check only:
+// the address itself stays as it is
+function untranslated(u, host) {
+  if (!host.endsWith('.translate.goog')) return host;
+  const enc = u.searchParams.get('_x_tr_enc')?.split(',') ?? [];
+  let name = ((u.searchParams.get('_x_tr_hp') ?? '') + host.slice(0, -'.translate.goog'.length)).toLowerCase();
+  if (enc.includes('1') && name.startsWith('1-')) name = name.slice(2);
+  const idn = enc.includes('0') && name.startsWith('0-'); // an internationalized name, its xn-- dropped
+  if (idn) name = name.slice(2);
+  return (idn ? 'xn--' : '') + name.replace(/\b-\b/g, '.').replaceAll('--', '-');
+}
+// the porn page, told why the tab is there: ?host= the listed site, or ?mark= the platform (x, reddit, bluesky)
+// that marked what the page loaded as adult itself. a page caught after it committed has a history entry of its
+// own, and going back to it would load it and send the tab here again: that entry is replaced, or, where
+// tabs.update cannot replace (android), the porn page is told to step over it
+async function toPorn(tabId, why, committed) {
+  const url = browser.runtime.getURL(`porn/porn.html?${new URLSearchParams(why)}`);
+  if (!committed) return browser.tabs.update(tabId, { url });
+  if (await android) return browser.tabs.update(tabId, { url: `${url}&skip` });
+  return browser.tabs.update(tabId, { url, loadReplace: true });
+}
+// every top-level navigation, before it loads and again once it commits: a redirect (a link shortener, an alias
+// domain) shows its real address only then. a frame (reddit's redgifs players) counts once it commits: firefox
+// reports a frame's onBeforeNavigate before a blocker (ublock origin, tracking protection) can cancel its request,
+// and a cancelled frame shows nothing (WebNavigation.sys.mjs, DocumentChannelChild.cpp, 2026-10).
+// returns what it did, if anything
+function guard({ frameId, tabId, url }, committed) {
   const u = new URL(url);
-  // a trailing dot ("tiktok.com.") is the same site to its server but matches no rule here, the content scripts'
-  // hosts included, so the tab goes to the address without it
+  // a trailing dot ("tiktok.com.") is the same site to its server but matches no content script or rule here, so
+  // a tab on one of the sites goes to the address without it. other sites keep theirs: there it is a way to shed
+  // a site's cookies, or to keep a short intranet name from being completed
   const host = u.hostname.replace(/\.+$/, '');
-  if (isPorn(host)) browser.tabs.update(tabId, { url: browser.runtime.getURL('porn/porn.html') });
-  else if (frameId === 0 && host !== u.hostname) {
+  const named = untranslated(u, host);
+  if (isPorn(named)) return toPorn(tabId, { host: named }, committed);
+  if (frameId === 0 && host !== u.hostname && onSites(host)) {
     u.hostname = host;
-    browser.tabs.update(tabId, { url: u.href });
+    return browser.tabs.update(tabId, { url: u.href });
   }
 }
-browser.webNavigation.onBeforeNavigate.addListener(guard);
-browser.webNavigation.onCommitted.addListener(guard);
+browser.webNavigation.onBeforeNavigate.addListener((details) => details.frameId === 0 && guard(details, false));
+browser.webNavigation.onCommitted.addListener((details) => guard(details, true));
+// navigations made before this page ran sent no event, and nothing queues them: at app startup firefox starts a
+// persistent background page only after session restore, after android reclaimed the extension process only
+// once firefox is back on screen (ext-backgroundPage.js; webNavigation is not startup-blocking, ext-toolkit.json;
+// 2026-10). an install or enable finds tabs already open, and a list update adds sites. so the open tabs are
+// checked whenever the list is (re)loaded
+function recheck() {
+  browser.tabs.query({}).then(async (tabs) => {
+    for (const { id } of tabs) {
+      // null for a discarded tab, checked when it loads; a tab closed since the query rejects: nothing left there
+      const frames = await browser.webNavigation.getAllFrames({ tabId: id }).catch(() => null);
+      // the first hit sends the tab away. a frame that has shown nothing yet has no url (currentURI?.spec,
+      // WebNavigationFrames.sys.mjs), and new URL() of nothing would end the check of every tab after it
+      frames?.some((frame) => frame.url && guard({ ...frame, tabId: id }, true));
+    }
+  }).catch((e) => console.error('dis2tract: open tabs not checked', e));
+}
 
 // sites with porn among everything else mark it in the data they load: x flags media "adult_content" (apart from
 // graphic_violence), reddit tags posts nsfw (new reddit's shreddit elements) or over18 (old reddit), bluesky labels
@@ -197,18 +262,22 @@ for (const { urls, types, adult } of LABELED) {
 // single-page sites change the address through the history api, and content.js only looks every 400 ms: a feed
 // address passed through faster (instagram's reels tab jumping to a reel) is reported to the tab right away
 const HOSTS = MATCHES.map((m) => /^\*:\/\/(\*\.)?([^/]+)\//.exec(m)).map(([, any, host]) => (any ? { hostSuffix: `.${host}` } : { hostEquals: host }));
+// a host the content scripts run on, as the manifest's patterns match it (*.reddit.com takes reddit.com too)
+const onSites = (host) => HOSTS.some(({ hostEquals, hostSuffix }) => host === hostEquals || (hostSuffix !== undefined && `.${host}`.endsWith(hostSuffix)));
 browser.webNavigation.onHistoryStateUpdated.addListener(({ frameId, tabId, url }) => {
   // a tab whose content script has not started yet has no listener; it reads the address itself when it starts
   if (frameId === 0) browser.tabs.sendMessage(tabId, { url }, { frameId: 0 }).catch(() => {});
 }, { url: HOSTS });
 browser.storage.local.get('pornList').then(({ pornList }) => {
-  if (pornList) [porn, pornAt] = [new Set([...ADULT_TLDS, ...pornList.domains]), pornList.at];
+  if (pornList) [porn, pornAt] = [pornSet(pornList.domains), pornList.at];
+  recheck();
   const update = () => updatePorn().catch((e) => console.error('dis2tract: porn list update failed, the last copy stays', e));
   update();
   setInterval(update, 60 * 60_000); // checked hourly, fetched once it is a day old
 });
-// opens after the extension is removed: someone else's page until dis2tract has its own. only this bare url
-// goes out, never the user's note or stats.
+// opens after the extension is removed, on desktop only: firefox for android keeps the address and never opens it
+// (bug 1461882, 2026-10). someone else's page until dis2tract has its own. only this bare url goes out, never the
+// user's note or stats.
 browser.runtime.setUninstallURL('https://www.npr.org/2026/04/07/nx-s1-5775917/why-infinite-scrolls-inventor-wants-to-kill-his-creation');
 
 if (browser.theme) {

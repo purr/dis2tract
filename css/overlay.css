@@ -142,8 +142,11 @@ html[data-dis2tract-blocked] body {
 #dis2tract .d2t-unlock { flex: none; width: 100%; max-width: 460px; margin-top: 32px; }
 #dis2tract .d2t-unlock p { margin: 0 auto 14px; font-size: 15px; }
 #dis2tract .d2t-unlock button + button { margin-left: 10px; }
-/* the porn page's clip, between the quote and the better thing to do */
-#dis2tract video.d2t-clip { display: block; max-width: 100%; max-height: 40vh; margin: 0 auto 24px; border-radius: 22px; background: #000; }
+/* the porn page's clip, between the quote and the better thing to do. a set height, not a max: firefox lays a video
+   out at 300x150 until its size is known, and in the centered card a clip growing then would move the quote above
+   it. only the width follows the clip. the address that set the page off breaks anywhere: it has no spaces */
+#dis2tract video.d2t-clip { display: block; max-width: 100%; height: min(40vh, 440px); margin: 0 auto 24px; border-radius: 22px; background: #000; }
+#dis2tract .d2t-unlock p.d2t-sub { overflow-wrap: anywhere; }
 /* min-height, no vertical padding: a label that wraps (a narrow phone at the largest system font size, desktop's
    zoom text only) grows the pill instead of spilling out of it, while two lines still fit a phone's 44px pill
    unchanged. the transparent border is drawn in forced colors (windows contrast themes), which turn the pill's
