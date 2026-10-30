@@ -42,6 +42,8 @@ test('links: the sites\' share links lose their tracking, and what a link opens 
     ['https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42&si=abc&feature=shared', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42'],
     ['https://www.youtube.com/watch?v=a&list=PL1&index=2&pp=ygUFY2F0cw%3D%3D', 'https://www.youtube.com/watch?v=a&list=PL1&index=2'],
     ['https://x.com/jack/status/20?s=46&t=AbCdEfGh', 'https://x.com/jack/status/20'],
+    ['https://x.com/jack/status/20?a=RFELiAObBLe_jLlG8Ms&s=20', 'https://x.com/jack/status/20'],
+    ['https://x.com/jack/status/20?cxt=HHwWgI&refsrc=email&si=abc', 'https://x.com/jack/status/20'],
     ['https://www.tiktok.com/@a/video/7123?_r=1&_t=8kLm&u_code=xyz&preview_pb=0&sender_device=pc&web_id=713&is_from_webapp=1&share_app_id=1233&lang=en', 'https://www.tiktok.com/@a/video/7123?lang=en'],
     ['https://www.instagram.com/p/C1a2B3/?igsh=MWQ1ZGUxMzBkMA%3D%3D&img_index=2', 'https://www.instagram.com/p/C1a2B3/?img_index=2'],
     ['https://www.reddit.com/r/aww/comments/1abc/cats/?share_id=Xy&utm_medium=android_app&utm_source=share&context=3', 'https://www.reddit.com/r/aww/comments/1abc/cats/?context=3'],

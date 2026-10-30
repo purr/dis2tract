@@ -12,7 +12,9 @@
 const TRACKING = [
   [/./, /^(utm_\w+|mtm_\w+|fbclid|gclid|dclid|gbraid|wbraid|msclkid|yclid|ttclid|twclid|li_fat_id|igshid|igsh|mc_[ce]id|_hsenc|_hsmi|mkt_tok|srsltid)$/i],
   [/(^|\.)(youtube\.com|youtu\.be)$/, /^(si|feature|pp|kw)$/],
-  [/(^|\.)(x|twitter)\.com$/, /^(s|t|cn|ref_src|ref_url)$/],
+  // a is new on copied links (cybernews, the cybersec guru, 2026-10-29). the rest from adguard's url tracking filter and
+  // legitimate url shortener (2026-10), all but src, which sites.js reads on a search
+  [/(^|\.)(x|twitter)\.com$/, /^(a|s|t|si|cn|cxt|mid|content|source|medium|channel|campaign|refsrc|ref_src|ref_url|optiCID)$/],
   [/(^|\.)tiktok\.com$/, /^(_r|_t|_d|u_code|preview_pb|timestamp|user_id|sec_user_id|share_\w+|sender_device|sender_web_id|social_sharing|is_copy_url|is_from_webapp|web_id|checksum|tt_from|source|refer|enter_from|enter_method)$/],
   [/(^|\.)reddit\.com$/, /^(share_id|rdt|correlation_id|ref_campaign|ref_source|ref|post_index|_branch_match_id|\$deep_link|\$3p|\$original_url)$/],
   [/(^|\.)facebook\.com$/, /^(mibextid|rdid|__tn__|__cft__\[\d+\]|__xts__\[\d+\]|eav|sfnsn|paipv|rdc|rdr|_rdr|_nc_x|comment_tracking|refsrc|fref|hc_ref|hc_location|extid|wtsid|ftentidentifier|video_source|action_history)$/],
