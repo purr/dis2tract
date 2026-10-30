@@ -28,7 +28,8 @@ for (const [id, site] of Object.entries(SITES)) {
   }
   if (!site.me) {
     const handle = el('input', { type: 'text', name: `handle:${id}`, placeholder: '@handle', autocomplete: 'off', spellcheck: false });
-    handle.setAttribute('aria-label', `your ${site.name} handle, for a "my profile" link`);
+    // the name starts with the visible label, so voice control finds "my handle" (wcag 2.5.3)
+    handle.setAttribute('aria-label', `my handle on ${site.name}, for a "my profile" link`);
     rows.push(row('my handle', handle));
   }
   document.getElementById('sites').append(el('section', {}, el('h2', { textContent: site.name }), el('div', { className: 'group' }, ...rows)));
@@ -49,6 +50,9 @@ applyTheme(browser.extension.getBackgroundPage()?.theme);
 
 function fill(s) {
   for (const field of form.elements) {
+    // the field being typed in keeps its text: it saves on every keystroke, and a refill would drop what was typed
+    // since and move the cursor
+    if (field === document.activeElement && ['text', 'textarea'].includes(field.type)) continue;
     const [kind, id] = field.name.split(':');
     if (kind === 'site') field.checked = s.sites[id] !== false;
     else if (kind === 'toggle') field.checked = s.toggles[id] ?? defaults[id];
@@ -111,6 +115,7 @@ async function save(tidy) {
   const { settings, pending: waiting } = await store.get(['settings', 'pending']);
   const live = settings?.version === DEFAULTS.version ? settings : { version: DEFAULTS.version };
   const now = tighterPart(next, live);
+  let at = null; // when the waiting part applies
   if (looser(mergeSettings(next), mergeSettings(now))) {
     // only the loosening part waits. its timer keeps running through later edits, and starts over only when
     // the change loosens more than what was already waiting.
@@ -118,12 +123,15 @@ async function save(tidy) {
     const pending = { settings: next, at: more ? Date.now() + LOOSEN_DELAY_MINUTES * 60_000 : waiting.at };
     await store.set({ pending, settings: now });
     showPending(pending);
+    at = pending.at;
   } else {
     await store.set({ settings: next });
     await store.remove('pending');
     showPending(null);
   }
-  form.querySelector('output').textContent = 'saved';
+  // the live status speaks on a change, not on every keystroke of the note or a handle, and a loosening says it
+  // waits: the banner saying so is not read out, and is often scrolled out of view
+  if (tidy) form.querySelector('output').textContent = at ? `saved. looser settings apply at ${clock(at)}.` : 'saved';
 }
 
 form.addEventListener('input', (e) => ['text', 'textarea'].includes(e.target.type) && save(false));
@@ -131,11 +139,16 @@ form.addEventListener('change', () => save(true));
 document.getElementById('cancel').addEventListener('click', async () => {
   await store.remove('pending');
   render();
+  form.querySelector('output').textContent = 'cancelled'; // the status no longer names a time that is gone
 });
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (changes.theme) applyTheme(changes.theme.newValue);
-  // a waiting change that just applied, from another tab or the content script
-  if (changes.pending && !changes.pending.newValue) showPending(null);
+  // a change from another settings tab (a duplicate, or android's new one per toolbar tap) or a waiting change that
+  // applied: refill, or this tab's next save writes its older form back, and a limit tightened over there returns
+  // as a waiting loosening
+  if (changes.settings || changes.pending) render();
 });
+// firefox runs an add-on in private windows only once the user allows it there, and nothing else says so
+browser.extension.isAllowedIncognitoAccess().then((allowed) => (document.getElementById('private').hidden = allowed));
 render();
