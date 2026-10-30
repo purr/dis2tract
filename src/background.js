@@ -356,16 +356,24 @@ browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.settings) cleanLinks = mergeSettings(changes.settings.newValue).cleanLinks;
 });
 function untco(text) {
+  const data = json(text);
   const real = new Map();
-  anyObject(json(text), (v) => {
-    if (typeof v.url === 'string' && v.url.startsWith('https://t.co/') && typeof v.expanded_url === 'string') real.set(v.url, v.expanded_url);
+  anyObject(data, (v) => {
+    const expanded = v.expanded_url ?? v.expanded; // expanded: a quoted post's permalink
+    if (/^https?:\/\/t\.co\/\w+$/.test(v.url) && typeof expanded === 'string') real.set(v.url, expanded);
     return false;
   });
   if (!real.size) return null;
-  return text.replace(/"(https:(?:\\?\/){2}t\.co\\?\/\w+)"/g, (whole, link) => {
-    const target = real.get(link.replaceAll('\\/', '/'));
-    return target ? JSON.stringify(target) : whole;
-  });
+  // url and a card's string_value, as twitter-direct does. not legacy.url: left as it is, x keeps a card's link
+  // clickable in the post's text. and not a card's rest_id, which is its id
+  const swap = (v, legacy) => {
+    for (const [key, x] of Object.entries(v)) {
+      if (x && typeof x === 'object') swap(x, key === 'legacy');
+      else if (((key === 'url' && !legacy) || key === 'string_value') && real.has(x)) v[key] = real.get(x);
+    }
+  };
+  swap(data, false);
+  return JSON.stringify(data);
 }
 function readJson(site, itemOf, marked, rewrite) {
   return ({ requestId, tabId, url: request }) => {
@@ -447,6 +455,23 @@ for (const { urls, types, read } of LABELED) {
     if (details.tabId >= 0) read(details); // a request of no tab (a service worker) has no page to send anywhere
   }, { urls, types }, ['blocking']);
 }
+// the rest of x's api (notifications, direct messages ...) carries t.co links too. only json: an answer is held whole
+// here, and an event stream never ends, so this waits for the headers (graphql goes through the label reader above)
+browser.webRequest.onHeadersReceived.addListener(({ requestId, tabId, url, responseHeaders }) => {
+  if (!cleanLinks || tabId < 0 || url.includes('/i/api/graphql/')) return;
+  const type = responseHeaders.find(({ name }) => name.toLowerCase() === 'content-type')?.value ?? '';
+  if (!type.startsWith('application/json')) return;
+  const filter = browser.webRequest.filterResponseData(requestId);
+  const chunks = [];
+  filter.ondata = ({ data }) => chunks.push(data);
+  filter.onstop = () => {
+    const decoder = new TextDecoder();
+    const clean = untco(chunks.map((d) => decoder.decode(d, { stream: true })).join('') + decoder.decode());
+    if (clean !== null) filter.write(new TextEncoder().encode(clean));
+    else for (const data of chunks) filter.write(data);
+    filter.close();
+  };
+}, { urls: ['*://x.com/i/api/*'], types: ['xmlhttprequest'] }, ['blocking', 'responseHeaders']);
 
 // single-page sites change the address through the history api, and content.js only looks every 400 ms: a feed
 // address passed through faster (instagram's reels tab jumping to a reel) is reported to the tab right away

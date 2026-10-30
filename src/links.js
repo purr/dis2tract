@@ -70,8 +70,12 @@ function cleanText(text) {
     if (!on) return;
     const link = e.composedPath().find((node) => node.localName === 'a');
     if (typeof link?.href !== 'string') return; // an svg link's href is no string
-    const clean = cleanLink(link.href);
+    // a t.co link the api data did not bring (untco() in background.js): x renders the whole address in the link's
+    // text, the parts it hides included, with a … at the end
+    const text = link.hostname === 't.co' ? link.textContent.replace(/…$/, '') : '';
+    const clean = cleanLink(/^https?:\/\/\S+$/.test(text) ? text : link.href);
     if (clean !== link.href) link.href = clean;
   };
-  for (const type of ['pointerdown', 'contextmenu', 'focusin']) document.addEventListener(type, tidy, true);
+  // mouseover: the status bar shows the real address too
+  for (const type of ['mouseover', 'pointerdown', 'contextmenu', 'focusin']) document.addEventListener(type, tidy, true);
 })();

@@ -1674,6 +1674,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     },
     webRequest: {
       onBeforeRequest: { addListener: (f, filter, extra) => watched.push({ f, filter, extra }) },
+      onHeadersReceived: { addListener() {} },
     },
     tabs: {
       update: (tabId, { url, loadReplace }) => {
@@ -1889,6 +1890,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
 test('background: an adult mark counts only on the item the tab\'s address names, and a marked answer never reaches the page', async () => {
   const sent = []; // [tabId, tabs.update properties]
   const changed = []; // storage.onChanged listeners
+  const headers = []; // webRequest.onHeadersReceived listeners
   const watched = []; // webRequest listeners: { f, filter }
   const streams = {}; // response filters by request id
   const addresses = {}; // each tab's address now; none for a tab on a site without host permission
@@ -1903,6 +1905,7 @@ test('background: an adult mark counts only on the item the tab\'s address names
     webNavigation: { onBeforeNavigate: { addListener() {} }, onCommitted: { addListener() {} }, onHistoryStateUpdated: { addListener() {} } },
     webRequest: {
       onBeforeRequest: { addListener: (f, filter) => watched.push({ f, filter }) },
+      onHeadersReceived: { addListener: (f) => headers.push(f) },
       filterResponseData: (id) => (streams[id] = { written: [], write(d) { this.written.push(d); }, close() { this.closed = true; } }),
     },
     tabs: { get: async (tabId) => ({ url: addresses[tabId] }), update: (tabId, props) => sent.push([tabId, props]), query: async () => [] },
@@ -1966,8 +1969,26 @@ test('background: an adult mark counts only on the item the tab\'s address names
     entities: { urls: [{ display_url: 'example.com/a', expanded_url: 'https://example.com/a?id=1', url: 'https://example.com/a?id=1', indices: [5, 21] }] },
     card: { binding_values: [{ key: 'card_url', value: { string_value: 'https://example.com/a?id=1', type: 'STRING' } }] },
   });
+  // the rest of x's api, json only: an event stream never ends, and graphql has its reader
+  const rest = (id, url, type) => {
+    headers[0]({ requestId: id, tabId: 1, url, responseHeaders: [{ name: 'Content-Type', value: type }] });
+    return streams[id];
+  };
+  const notes = rest('rest', 'https://x.com/i/api/2/notifications/all.json', 'application/json; charset=utf-8');
+  notes.ondata({ data: new TextEncoder().encode(linked) });
+  notes.onstop();
+  assert.equal(JSON.parse(new TextDecoder().decode(notes.written[0])).entities.urls[0].url, 'https://example.com/a?id=1');
+  assert.equal(rest('stream', 'https://x.com/i/api/1.1/live_pipeline/events', 'text/event-stream'), undefined);
+  assert.equal(rest('graph', 'https://x.com/i/api/graphql/a/HomeTimeline', 'application/json'), undefined);
+  // a card's legacy.url and rest_id stay; a quoted post's permalink counts
+  const carded = JSON.parse(linked);
+  Object.assign(carded.card, { rest_id: 'https://t.co/abc', legacy: { url: 'https://t.co/abc' } });
+  carded.quoted_status_permalink = { url: 'https://t.co/q', expanded: 'https://x.com/a/status/2', display: 'x.com/a/status/2' };
+  const page2 = JSON.parse((await answer(home, JSON.stringify(carded))).page);
+  assert.deepEqual([page2.card.rest_id, page2.card.legacy.url, page2.quoted_status_permalink.url], ['https://t.co/abc', 'https://t.co/abc', 'https://x.com/a/status/2']);
   for (const f of changed) f({ settings: { newValue: { version: 2, cleanLinks: false } } }, 'local');
   assert.equal((await answer(home, linked)).page, linked);
+  assert.equal(rest('off', 'https://x.com/i/api/2/notifications/all.json', 'application/json'), undefined, 'switched off, nothing is read');
 
   // reddit: the post of the address by its own nsfw or its community's subreddit-nsfw, as the page streams in. a
   // title, a community description and a related post beside it are no marks

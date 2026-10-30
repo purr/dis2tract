@@ -82,6 +82,13 @@ test('links: copied through the site\'s button, as a selection or a field, and o
   const link = { localName: 'a', href: 'https://example.com/?utm_source=x&id=1' };
   p.fire('contextmenu', { composedPath: () => [{ localName: 'span' }, link] });
   assert.equal(link.href, 'https://example.com/?id=1');
+  // a t.co link: the address in its text, hidden parts and … included; a card's text is no address, so it stays
+  const tco = { localName: 'a', hostname: 't.co', href: 'https://t.co/abc', textContent: 'https://example.com/long/path?utm_source=x…' };
+  p.fire('mouseover', { composedPath: () => [tco] });
+  assert.equal(tco.href, 'https://example.com/long/path');
+  const card = { localName: 'a', hostname: 't.co', href: 'https://t.co/def', textContent: 'example.com A title' };
+  p.fire('pointerdown', { composedPath: () => [card] });
+  assert.equal(card.href, 'https://t.co/def');
   const svg = { localName: 'a', href: { baseVal: 'https://example.com/?utm_source=x' } };
   p.fire('pointerdown', { composedPath: () => [svg] });
   assert.deepEqual(svg.href, { baseVal: 'https://example.com/?utm_source=x' }, 'an svg link is left alone');
