@@ -22,12 +22,14 @@ which files stay out of the package is set once, in `webExt.ignoreFiles` in `pac
 | `src/suggestions.js` | the roast questions and their tasks, the porn page's lines, what the day's time was enough for |
 | `src/ui.js` | the block screen's parts that the porn page shares |
 | `src/background.js` | theme colors, toolbar button, the chime, porn sites and adult labels, address changes passed to the tab, the day's time on social media, private windows' runs of items, uninstall page |
-| `css/overlay.css` | block screen, unlock sheet and the porn page |
+| `src/overlay.css.js` | the look of the block screen, the unlock sheet and the porn page, as text for the block screen's closed shadow root |
+| `css/page.css` | what must sit in the page: the scroll lock, the block screen's element, the time-left pill |
+| `src/links.js` | clean links: tracking off copied and opened links |
 | `options/` | the settings page |
 | `porn/` | the page porn tabs are sent to, and its two clips |
 | `sounds/` | the chime |
 
-rules are url-based, so a site redesign rarely breaks them; a site that moves a feed to a new url needs a new rule in `src/sites.js`. `DESIGN.md` is the stock apple.com design analysis (from awesome-design-md) the base colors, type and pills come from; where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `css/overlay.css` and `options/options.css` win. `pages/why-the-scroll-wins.html` explains why feeds are hard to put down and what research says helps; open it in any browser.
+rules are url-based, so a site redesign rarely breaks them; a site that moves a feed to a new url needs a new rule in `src/sites.js`. `DESIGN.md` is the stock apple.com design analysis (from awesome-design-md) the base colors, type and pills come from; where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `src/overlay.css.js` and `options/options.css` win. `pages/why-the-scroll-wins.html` explains why feeds are hard to put down and what research says helps; open it in any browser.
 
 ## builds and releases
 

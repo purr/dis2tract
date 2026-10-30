@@ -1,5 +1,5 @@
 // the parts the block screen (content.js) and the porn page (porn/porn.js) share, so both look and read the same.
-// both style them with css/overlay.css. function declarations: content scripts and extension pages share
+// both style them with src/overlay.css.js. function declarations: content scripts and extension pages share
 // globals, not modules.
 
 function h(tag, props = {}, ...kids) {

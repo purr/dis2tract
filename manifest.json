@@ -76,7 +76,7 @@
         "*://linkedin.com/*"
       ],
       "css": [
-        "css/overlay.css"
+        "css/page.css"
       ],
       "js": [
         "src/ui.js",
@@ -84,6 +84,7 @@
         "src/sites.js",
         "src/challenges.js",
         "src/suggestions.js",
+        "src/overlay.css.js",
         "src/content.js",
         "src/links.js"
       ],

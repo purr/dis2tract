@@ -37,6 +37,7 @@ newest first. each version's section becomes its github release notes.
 - settings warn when private windows are off, keep two open settings tabs in sync, and say when a looser setting applies
 - theater mode's cookie lasts the session and goes when theater mode or youtube is switched off: it used to keep videos wide for a year
 - a click on a feed link (the youtube logo) chimes again
+- the block screen sits in a closed shadow root: the sites' own scripts can't read your note, your handle, the apps you hopped between or the day's time
 - clean links: a link you copy or open on these sites loses its tracking (youtube's si, tiktok's device and share fields, utm and the like), and x's t.co links show, open and copy the real address. switch: settings → links
 - a feed opened from scratch stops loading at once: none of the site runs behind the block. if it may show after all (unlocked, feed switched off), it loads once more. a click on a link to a feed (the youtube logo) becomes such a load, and any other jump into a feed is blocked the moment the address changes
 - search results and profiles have no scroll limit

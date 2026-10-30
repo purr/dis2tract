@@ -79,9 +79,9 @@ async function syncTheme() {
   const decls = Object.entries(next).map(([k, v]) => `${k}: ${v};`).join(' ');
   // firefox takes an injected sheet out of a page only when the page goes (ExtensionContent.sys.mjs, 2026-10), not
   // on unregister(), so a page loaded under an older theme keeps this one. it therefore covers only the first paint:
-  // content.js marks the overlay data-live once it paints the stored theme, and keys a newer theme lacks fall back
+  // content.js marks the overlay's host data-live once it paints the stored theme, and keys a newer theme lacks fall back
   // to the overlay.css defaults. still outranks those defaults whatever the injection order
-  if (decls) registered = await browser.contentScripts.register({ matches: MATCHES, css: [{ code: `html #dis2tract:not([data-live]) { ${decls} }` }], runAt: 'document_start' });
+  if (decls) registered = await browser.contentScripts.register({ matches: MATCHES, css: [{ code: `html #dis2tract-host:not([data-live]) { ${decls} }` }], runAt: 'document_start' });
   await browser.storage.local.set({ theme: next }); // pages already open restyle from this
 }
 

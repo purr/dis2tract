@@ -6,7 +6,7 @@
   const root = document.documentElement;
   // firefox injects this script again into open tabs when the extension is updated, reloaded or re-enabled; the
   // old instance's overlay stays behind with dead buttons, and older versions also left <body> inert
-  const stale = document.getElementById('dis2tract');
+  const stale = document.getElementById('dis2tract-host') ?? document.getElementById('dis2tract'); // 0.7.0 and older: the second
   if (stale) {
     stale.remove();
     root.removeAttribute('data-dis2tract-blocked');
@@ -63,6 +63,10 @@
   const watchedRoots = new WeakSet(); // shadow roots with a play listener
   let pauseTicks = 0;
   let overlay = null;
+  // the block screen's element in the page. everything on it sits in a closed shadow root, so site scripts can't read
+  // the mirror (the other sites visited), the day's time, the note or the handle after an in-app navigation
+  let host = null;
+  let shadow = null;
   let closeSheet = null; // closes the open unlock sheet
   let pill = null; // the unlock's time left, over the page it lets through
   let stopped = false; // this load was stopped before the site loaded: nothing of it is under the block
@@ -473,14 +477,21 @@
       const fresh = !overlay && booted;
       // a redraw keeps what was typed in the search, and the focus on it
       const search = overlay?.querySelector('input[type=search]');
-      const typing = Boolean(search) && document.activeElement === search;
+      const typing = Boolean(search) && shadow.activeElement === search;
       hide();
       if (ready && href !== countedHref) record();
       // mirror pinned at the top, the block centered, the unlock at the bottom. english whatever the site's
       // language: inherited, a screen reader read it with the site's voice and right-to-left scrambled it.
       // data-live: the theme from storage is painted on, the registered stylesheet (first paint only) steps aside
-      overlay = h('div', { id: 'dis2tract', lang: 'en', dir: 'ltr', 'data-reason': reason, 'data-state': state, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dis2tract-title', 'aria-describedby': 'dis2tract-sub', tabindex: '-1', ...(ready && { 'data-live': '' }), ...(fresh && { 'data-enter': '' }) },
+      overlay = h('div', { id: 'dis2tract', lang: 'en', dir: 'ltr', 'data-reason': reason, 'data-state': state, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dis2tract-title', 'aria-describedby': 'dis2tract-sub', tabindex: '-1', ...(fresh && { 'data-enter': '' }) },
         ...[mirror(), card(reason), unlockBox(reason)].filter(Boolean));
+      host = h('div', { id: 'dis2tract-host', ...(ready && { 'data-live': '' }) });
+      shadow = host.attachShadow({ mode: 'closed' });
+      // set as textContent, from here: only that way firefox counts it as this script's, past a strict page csp
+      // (HTMLStyleElement::SetTextContentInternal, nsStyleUtil::CSPAllowsInlineStyle's OverridesCSP, 2026-10)
+      const sheet = document.createElement('style');
+      sheet.textContent = OVERLAY_CSS;
+      shadow.append(sheet, overlay);
       const q = overlay.querySelector('input[type=search]');
       if (search) q.value = search.value;
       if (fresh) chime();
@@ -495,7 +506,7 @@
     }
     // last child of <html>: at document_start <body> does not exist yet and would otherwise paint above us.
     // never while it holds focus: moving an element blurs it, which closes the phone keyboard mid-sentence.
-    if (!overlay.isConnected || (overlay.nextElementSibling && !overlay.contains(document.activeElement))) root.append(overlay);
+    if (!host.isConnected || (host.nextElementSibling && document.activeElement !== host)) root.append(host);
     root.toggleAttribute('data-dis2tract-blocked', true); // no mutation when already set; this runs every tick
   }
 
@@ -506,7 +517,9 @@
 
   function hide() {
     if (!overlay) return;
-    overlay.remove();
+    host.remove();
+    host = null;
+    shadow = null;
     overlay = null;
     closeSheet = null;
     root.removeAttribute('data-dis2tract-blocked');
@@ -745,7 +758,8 @@
   window.addEventListener('focusin', (e) => {
     if (!overlay) return;
     e.stopImmediatePropagation();
-    if (overlay.contains(e.target)) lastFocus = e.target;
+    // focus inside the closed root reaches the window as its host
+    if (e.target === host) lastFocus = shadow.activeElement;
     else (lastFocus?.isConnected && overlay.contains(lastFocus) ? lastFocus : overlay).focus();
   }, true);
 
@@ -764,7 +778,7 @@
       theme = changes.theme.newValue ?? {};
       if (overlay) {
         overlay.removeAttribute('style');
-        overlay.setAttribute('data-live', '');
+        host.setAttribute('data-live', '');
         paint(overlay, theme);
       }
     }

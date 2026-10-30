@@ -1,0 +1,38 @@
+/* what has to sit in the page itself, injected by the manifest, so page csp cannot block it. every rule is id-scoped
+   to win over site styles. the block screen's own look is in src/overlay.css.js, inside its closed shadow root. */
+html[data-dis2tract-blocked],
+html[data-dis2tract-blocked] body {
+  overflow: hidden !important;
+}
+
+/* the block screen's element in the page. everything on it sits in its closed shadow root (content.js) */
+#dis2tract-host {
+  all: initial;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483647 !important;
+  display: block !important;
+}
+
+/* the unlock's time left, a pill over the page it lets through (timeLeft() in content.js). its own element, apart
+   from the block screen, with fixed colors that read on any site, and red for the last 30 s. small and at the very
+   top, where it covers the least of a site's own bar; taps go through it */
+#dis2tract-left {
+  all: initial;
+  position: fixed !important;
+  top: max(2px, env(safe-area-inset-top, 0px));
+  left: 50%;
+  z-index: 2147483647 !important;
+  display: block !important;
+  transform: translateX(-50%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  font: 600 12px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#dis2tract-left[data-ending] { background: #d70015; } /* 5.4:1 against the white text */

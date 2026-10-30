@@ -7,7 +7,7 @@ const vm = require('node:vm');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '../src', f), 'utf8');
 const settle = () => new Promise((r) => setImmediate(r));
-const SCRIPTS = ['ui.js', 'settings.js', 'sites.js', 'challenges.js', 'suggestions.js', 'content.js'];
+const SCRIPTS = ['ui.js', 'settings.js', 'sites.js', 'challenges.js', 'suggestions.js', 'overlay.css.js', 'content.js'];
 // local noon, so "today" never straddles midnight in any timezone the tests run in
 const NOON = new Date(2026, 9, 27, 12, 0).getTime();
 const MIN = 60_000;
@@ -74,7 +74,7 @@ class El {
   }
   get isConnected() {
     let n = this;
-    while (n.parentNode) n = n.parentNode;
+    while (n.parentNode || n.host) n = n.parentNode ?? n.host;
     return n === this.doc.documentElement;
   }
   get nextElementSibling() {
@@ -110,11 +110,24 @@ class El {
     walk(this);
     return sel === '*' ? all : all.filter((n) => sel.split(',').some((s) => n.matches(s.trim())));
   }
-  // focus moves, and the window's capturing listeners hear of it first, as in a browser
+  // a closed shadow root: to the page this element stays empty
+  attachShadow({ mode }) {
+    this.closedRoot = new El('#shadow', this.doc);
+    Object.assign(this.closedRoot, { mode, host: this });
+    const { closedRoot, doc } = this;
+    Object.defineProperty(closedRoot, 'activeElement', { get: () => (doc.activeElement === this ? closedRoot.active ?? null : null) });
+    return closedRoot;
+  }
+  // focus moves, and the window's capturing listeners hear of it first, as in a browser. inside a shadow root the
+  // document and the window see its host
   focus() {
-    this.doc.activeElement = this;
+    let top = this;
+    while (top.parentNode) top = top.parentNode;
+    if (top.host) top.active = this;
+    const target = top.host ?? this;
+    this.doc.activeElement = target;
     let stopped = false;
-    const e = { target: this, stopImmediatePropagation() { stopped = true; } };
+    const e = { target, stopImmediatePropagation() { stopped = true; } };
     for (const f of this.doc.defaultView?.listeners.focusin ?? []) if (!stopped) f(e);
   }
   set textContent(v) { this.children = []; this.text = String(v); }
@@ -227,7 +240,10 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
   // the first of every random pick: challenge 0 (retype) made of the first word, suggestion 0, and so on
   vm.runInContext('Math.random = () => 0', ctx);
   for (const f of SCRIPTS) vm.runInContext(read(f), ctx, { filename: f });
-  const overlay = () => root.children.find((c) => c.getAttribute('id') === 'dis2tract') ?? null;
+  const host = () => root.children.find((c) => c.getAttribute('id') === 'dis2tract-host') ?? null;
+  const overlay = () => host()?.closedRoot.children.find((c) => c.getAttribute('id') === 'dis2tract') ?? null;
+  // what has focus, seen from inside: only the extension can look into the closed root
+  const focused = () => (doc.activeElement === host() ? host()?.closedRoot.activeElement : doc.activeElement);
   const t = {
     ctx,
     win,
@@ -239,6 +255,8 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
     assigned,
     reloads,
     stops: () => stops,
+    host,
+    focused,
     overlay,
     reason: () => overlay()?.getAttribute('data-reason') ?? null,
     find: (pred) => overlay()?.find(pred) ?? null,
@@ -520,6 +538,21 @@ test('conversations have no scroll budget', async () => {
   assert.equal(t.reason(), null);
 });
 
+test('the block screen sits in a closed shadow root: the page finds nothing of it', async () => {
+  const t = boot('https://www.youtube.com/', { settings: { version: 2, note: 'my note', handles: { x: 'me' } } });
+  await settle();
+  const host = t.host();
+  assert.equal(host.closedRoot.mode, 'closed');
+  assert.equal(host.closedRoot.host, host);
+  assert.deepEqual([host.children.length, host.text], [0, ''], 'nothing in the page itself');
+  assert.deepEqual([...host.attrs.keys()].sort(), ['data-live', 'id'], 'nor on its element');
+  const style = host.closedRoot.children[0];
+  assert.equal(style.tagName, 'STYLE');
+  assert.match(style.textContent, /#dis2tract \{/, 'its stylesheet goes in with it: nothing outside reaches inside');
+  t.nav('https://www.youtube.com/results?search_query=a');
+  assert.equal(t.host(), null, 'and it goes when the block does');
+});
+
 test('a leftover overlay from an earlier instance is removed; fullscreen is left for the block screen', async () => {
   let exited = false;
   const t = boot('https://www.youtube.com/', {}, (doc, root) => {
@@ -534,7 +567,8 @@ test('a leftover overlay from an earlier instance is removed; fullscreen is left
     };
   });
   await settle();
-  assert.equal(t.doc.documentElement.children.filter((c) => c.getAttribute('id') === 'dis2tract').length, 1);
+  assert.equal(t.doc.documentElement.children.filter((c) => c.getAttribute('id') === 'dis2tract').length, 0);
+  assert.ok(t.host());
   assert.equal(t.reason(), 'feed');
   assert.ok(exited);
 });
@@ -793,13 +827,13 @@ test('a cooldown ending under the open block screen keeps the search being typed
   t.tick();
   assert.match(t.unlockText(), /^unlock youtube/, 'the cooldown is over');
   assert.equal(search(), q, 'the same field: its text, focus and phone keyboard stay');
-  assert.equal(t.doc.activeElement, q);
+  assert.equal(t.focused(), q);
   assert.equal(roast(), question, 'and the same question');
   await t.setStorage({ settings: { version: 2, note: 'hi' } }); // a redraw: another tab saved the settings
   await settle();
   assert.notEqual(search(), q);
   assert.equal(search().value, 'lo-fi');
-  assert.equal(t.doc.activeElement, search());
+  assert.equal(t.focused(), search());
 });
 
 test('a move from one blocked feed to another under the block screen names the new one', async () => {
@@ -1131,10 +1165,10 @@ test('the page cannot pull focus out of the answer field while blocked', async (
   const pageFocus = t.win.wrappedJSObject.HTMLElement.prototype.focus;
   const field = t.find((n) => n.tagName === 'INPUT');
   pageFocus.call(field);
-  assert.equal(t.doc.activeElement, field, 'focus inside the block screen still works');
+  assert.equal(t.focused(), field, 'focus inside the block screen still works');
   const player = new El('div', t.doc);
   pageFocus.call(player);
-  assert.equal(t.doc.activeElement, field, 'the page focusing its own player is ignored');
+  assert.equal(t.focused(), field, 'the page focusing its own player is ignored');
   const free = boot('https://www.tiktok.com/@someone');
   await settle();
   const other = new El('div', free.doc);
@@ -1149,7 +1183,7 @@ test('tab focus stays in the block screen, and the page hears of none of it', as
   const heard = [];
   t.win.addEventListener('focusin', (e) => heard.push(e.target)); // a site's own focus trap, as on reddit
   new El('button', t.doc).focus(); // tabbing past the end lands on the page
-  assert.equal(t.doc.activeElement, input, 'back in the answer field, not on the dialog');
+  assert.equal(t.focused(), input, 'back in the answer field, not on the dialog');
   input.focus(); // a tap on the field
   assert.deepEqual(heard, [], 'a trap that blurs what took focus would close the phone keyboard on every tap');
   const free = boot('https://x.com/jack');
@@ -1182,10 +1216,10 @@ test('the block screen moves back to the end of the page, never while it holds f
   const body = new El('body', t.doc);
   t.doc.documentElement.append(body); // <body> comes after the block screen, and would paint above it
   t.tick();
-  assert.equal(t.overlay().nextElementSibling, body, 'moving it would blur the field and close the phone keyboard');
+  assert.equal(t.host().nextElementSibling, body, 'moving it would blur the field and close the phone keyboard');
   t.doc.activeElement = null;
   t.tick();
-  assert.equal(t.overlay().nextElementSibling, null, 'moved once nothing in it has focus');
+  assert.equal(t.host().nextElementSibling, null, 'moved once nothing in it has focus');
 });
 
 test('music from a player in no document is stopped while blocked', async () => {
@@ -1471,10 +1505,10 @@ test('a switched-off site is left alone; settings from another version are disca
 
 test('block screen: @profile, reddit r/name, search, my profile link and theme colors', async () => {
   const t = boot('https://x.com/home', { settings: { version: 2, handles: { x: 'jack' } }, theme: { '--d2t-bg': 'rgb(1 2 3)' } });
-  assert.equal(t.overlay().getAttribute('data-live'), null, 'the first paint takes the theme registered at load');
+  assert.equal(t.host().getAttribute('data-live'), null, 'the first paint takes the theme registered at load');
   await settle();
   assert.equal(t.overlay().style.props['--d2t-bg'], 'rgb(1 2 3)');
-  assert.equal(t.overlay().getAttribute('data-live'), '', 'then the one in storage, which a theme switched since then wins');
+  assert.equal(t.host().getAttribute('data-live'), '', 'then the one in storage, which a theme switched since then wins');
   assert.ok(t.find((n) => n.tagName === 'A' && n.getAttribute('href') === '/jack' && n.textContent === 'my profile'));
   const form = t.find((n) => n.tagName === 'FORM');
   const input = form.querySelector('input');
@@ -1514,7 +1548,7 @@ const packed = (file) => !file.split('/').some((_, i, parts) => IGNORED.some((re
 test('the porn page is built from the block screen\'s parts, look and theme, and says what set it off', async () => {
   const html = fs.readFileSync(path.join(__dirname, '../porn/porn.html'), 'utf8');
   const refs = [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(refs, ['../css/overlay.css', '../src/settings.js', '../src/ui.js', '../src/suggestions.js', 'porn.js']);
+  assert.deepEqual(refs, ['../src/overlay.css.js', '../src/settings.js', '../src/ui.js', '../src/suggestions.js', 'porn.js']);
   // the page at an address (?host=, ?mark=, &skip from background.js). background: null in a private window
   const open = (search, { background = { theme: { '--d2t-bg': '#123456' } }, stored = {}, length = 1, reduced = false, refuse = false, hidden = false } = {}) => {
     const doc = {};
@@ -1555,10 +1589,10 @@ test('the porn page is built from the block screen\'s parts, look and theme, and
         storage: { local: { get: async () => stored }, onChanged: { addListener: (f) => (changed = f) } },
       },
     });
-    for (const f of ['../src/settings.js', '../src/ui.js', '../src/suggestions.js', '../porn/porn.js']) {
+    for (const f of ['../src/overlay.css.js', '../src/settings.js', '../src/ui.js', '../src/suggestions.js', '../porn/porn.js']) {
       vm.runInContext(fs.readFileSync(path.join(__dirname, f), 'utf8'), ctx, { filename: f });
     }
-    const screen = doc.body.children[0];
+    const screen = doc.body.children.find((c) => c.getAttribute('id') === 'dis2tract');
     const has = (cls) => screen.find((n) => n.getAttribute('class') === cls);
     const button = (text) => screen.find((n) => n.tagName === 'BUTTON' && n.textContent === text);
     // what set it off: the lines above the buttons
@@ -1855,7 +1889,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   assert.equal(registered.length, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(registered[0].options)), {
     matches: ['*://x.com/*'],
-    css: [{ code: 'html #dis2tract:not([data-live]) { --d2t-bg: #0a141e; --d2t-fg: #ffffff; --d2t-card: #0a141e; --d2t-card-fg: #ffffff; --d2t-accent: #00aaff; }' }],
+    css: [{ code: 'html #dis2tract-host:not([data-live]) { --d2t-bg: #0a141e; --d2t-fg: #ffffff; --d2t-card: #0a141e; --d2t-card-fg: #ffffff; --d2t-accent: #00aaff; }' }],
     runAt: 'document_start',
   });
   // a translucent field goes out as it shows over the page, so the unlock sheet never lets the block screen through.

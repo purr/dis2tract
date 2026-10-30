@@ -1,4 +1,4 @@
-/* ios settings look (base colors and type from DESIGN.md), same variables as css/overlay.css.
+/* ios settings look (base colors and type from DESIGN.md), same variables as src/overlay.css.js.
    options.js overrides bg/fg, card/card-fg and accent with the firefox theme, as checked by background.js. */
 :root {
   color-scheme: light dark;

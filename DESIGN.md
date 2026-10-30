@@ -273,7 +273,7 @@ components:
     padding: 64px
 ---
 
-> dis2tract takes its base colors, type and pills from this analysis of apple.com. where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `css/overlay.css` and `options/options.css` win.
+> dis2tract takes its base colors, type and pills from this analysis of apple.com. where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `src/overlay.css.js` and `options/options.css` win.
 
 ## Overview
 

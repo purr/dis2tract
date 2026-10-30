@@ -1,5 +1,5 @@
 // where porn sites lead (background.js sends the tab here, before the site loads where it can). the block screen's
-// own parts (src/ui.js), look (css/overlay.css) and theme colors, with a quote that stings, one of two clips, one
+// own parts (src/ui.js), look (src/overlay.css.js) and theme colors, with a quote that stings, one of two clips, one
 // better thing to do, and what set it off. the words live in src/suggestions.js
 // vp9 and opus, which every firefox decodes with its own bundled code (media/ffvpx/libavcodec/codec_list.c,
 // 2026-10). firefox leaves h.264 and aac to the os, and windows n without the media feature pack or a linux without
@@ -38,7 +38,9 @@ if (!background) browser.storage.local.get('theme').then(({ theme }) => repaint(
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.theme) repaint(changes.theme.newValue);
 });
-document.body.append(screen);
+const sheet = document.createElement('style');
+sheet.textContent = OVERLAY_CSS;
+document.body.append(sheet, screen);
 
 // with sound: firefox lets extension pages play without a click (AutoplayPolicy.cpp: an extension document passes
 // media.autoplay.allow-extension-background-pages, on by default, 2026-10). muted is the fallback for a firefox

@@ -1,18 +1,28 @@
-/* injected by the manifest, so page csp cannot block it. every rule is id-scoped to win over site styles.
-   look: apple's screen time limit screen (base colors and type from DESIGN.md), painted with the firefox theme's colors. */
-html[data-dis2tract-blocked],
-html[data-dis2tract-blocked] body {
-  overflow: hidden !important;
-}
-
+// the block screen's stylesheet, as text: page and manifest stylesheets stop at its closed shadow root (content.js), so
+// it goes inside, and it has to be there at document_start, with no time to load a file. the porn page uses it too.
+// look: apple's screen time limit screen (base colors and type from DESIGN.md), painted with the firefox theme's colors.
+// var, not const: the binding must be visible to the script files loaded after this one
+var OVERLAY_CSS = `
 /* apple defaults. background.js overrides bg/fg, card/card-fg and accent with the firefox theme, each only where
-   it stays readable (it checks the contrast); everything else derives from those. */
-#dis2tract {
+   it stays readable (it checks the contrast); everything else derives from those. on the shadow root's host (the
+   porn page's :root): the theme's first-paint rule sets them there from outside the root, and a rule on the host from
+   outside wins over :host. the derived ones stay on the element itself, where painted colors make them recompute */
+:root, :host {
   --d2t-bg: #f5f5f7;
   --d2t-fg: #1d1d1f;
   --d2t-card: #ffffff;
   --d2t-card-fg: var(--d2t-fg);
   --d2t-accent: #0071e3;
+}
+@media (prefers-color-scheme: dark) {
+  :root, :host {
+    --d2t-bg: #000000;
+    --d2t-fg: #f5f5f7;
+    --d2t-card: #1c1c1e;
+    --d2t-accent: #2997ff;
+  }
+}
+#dis2tract {
   /* 70%: at least 4.5:1 for small text, which background.js checks for a theme's pairs. the card has its own:
      muted text on a card mixed from the page colors fell to 1.2:1 under some themes */
   --d2t-muted: color-mix(in srgb, var(--d2t-fg) 70%, var(--d2t-bg));
@@ -20,14 +30,6 @@ html[data-dis2tract-blocked] body {
   --d2t-line: color-mix(in srgb, var(--d2t-fg) 12%, transparent);
   --d2t-line-strong: color-mix(in srgb, var(--d2t-fg) 24%, transparent);
   --d2t-ease: cubic-bezier(0.4, 0, 0.2, 1);
-}
-@media (prefers-color-scheme: dark) {
-  #dis2tract {
-    --d2t-bg: #000000;
-    --d2t-fg: #f5f5f7;
-    --d2t-card: #1c1c1e;
-    --d2t-accent: #2997ff;
-  }
 }
 
 #dis2tract {
@@ -312,26 +314,4 @@ html[data-dis2tract-blocked] body {
   #dis2tract .d2t-sheet { animation-name: dis2tract-fade; } /* fades in and out, no slide */
   #dis2tract .d2t-layer[data-closing] .d2t-sheet { animation-name: dis2tract-fade-out; }
 }
-
-/* the unlock's time left, a pill over the page it lets through (timeLeft() in content.js). its own element, apart
-   from the block screen, with fixed colors that read on any site, and red for the last 30 s. small and at the very
-   top, where it covers the least of a site's own bar; taps go through it */
-#dis2tract-left {
-  all: initial;
-  position: fixed !important;
-  top: max(2px, env(safe-area-inset-top, 0px));
-  left: 50%;
-  z-index: 2147483647 !important;
-  display: block !important;
-  transform: translateX(-50%);
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: rgb(0 0 0 / 0.72);
-  color: #fff;
-  font: 600 12px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  pointer-events: none;
-  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-#dis2tract-left[data-ending] { background: #d70015; } /* 5.4:1 against the white text */
+`;
