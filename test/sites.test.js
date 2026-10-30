@@ -33,15 +33,28 @@ const CASES = [
   ['youtube', 'https://m.youtube.com/?app=m', 'feed'],
   ['youtube', 'https://www.youtube.com/shorts/', 'feed'],
   ['youtube', 'https://www.youtube.com/feed/trending', 'feed'],
+  ['youtube', 'https://www.youtube.com/index?app=desktop', 'feed'],
+  // the explore pages at their other addresses: handle (any case, with tabs), channel url, /feed/*_destination
+  ['youtube', 'https://www.youtube.com/@Gaming', 'feed'],
+  ['youtube', 'https://www.youtube.com/channel/UCOpNcN46UbXVtpKMrmU4Abg/', 'feed'],
+  ['youtube', 'https://www.youtube.com/feed/live_destination', 'feed'],
+  ['youtube', 'https://www.youtube.com/news', 'feed'],
+  ['youtube', 'https://www.youtube.com/@news/videos', 'feed'],
+  ['youtube', 'https://www.youtube.com/channel/UC-9-kyTW8ZkZNDHQJ6FgpwQ', 'feed'],
   ['youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10', 'dQw4w9WgXcQ'],
   ['youtube', 'https://www.youtube.com/watch?v=abc&list=PLcourse&index=3', 'list:PLcourse'],
   ['youtube', 'https://www.youtube.com/watch?v=abc&list=RDabc', 'abc'],
   ['youtube', 'https://www.youtube.com/shorts/abc_DEF-1', 'abc_DEF-1'],
+  ['youtube', 'https://www.youtube.com/live/abcDEF12345', 'abcDEF12345'],
+  ['youtube', 'https://www.youtube.com/clip/UgytZKpehg-hEMBSn3F4AaABCQ', 'UgytZKpehg-hEMBSn3F4AaABCQ'],
   ['youtube', 'https://www.youtube.com/@mkbhd/videos', null],
+  ['youtube', 'https://www.youtube.com/@gamingfan', null],
   ['youtube', 'https://www.youtube.com/results?search_query=cats', null],
   ['youtube', 'https://www.youtube.com/feed/subscriptions', null],
   ['x', 'https://x.com/home', 'feed'],
   ['x', 'https://x.com/explore/tabs/for-you', 'feed'],
+  ['x', 'https://x.com/jack/communities', 'feed'],
+  ['x', 'https://x.com/jack/communities/explore', 'feed'],
   ['x', 'https://x.com/jack/status/20', '20'],
   ['x', 'https://x.com/jack/status/20/photo/1', '20'],
   ['x', 'https://x.com/i/web/status/20', '20'],
@@ -49,14 +62,25 @@ const CASES = [
   ['x', 'https://x.com/jack/status/20/mediaViewer?currentTweet=30&currentTweetUser=bob', '30'],
   ['x', 'https://x.com/jack?currentTweet=30', null],
   ['x', 'https://x.com/jack', null],
+  ['x', 'https://x.com/i/communities/1493446837214187523', null],
   ['x', 'https://x.com/search?q=cats&src=typed_query', null],
   ['tiktok', 'https://www.tiktok.com/', 'feed'],
   ['tiktok', 'https://www.tiktok.com/foryou', 'feed'],
   ['tiktok', 'https://www.tiktok.com/en', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/zh-Hant-TW/', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/zh-Hans/', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/es-419/', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/fil-PH/', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/ceb-PH/', 'feed'],
   ['tiktok', 'https://us.tiktok.com/live', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/live/gaming/Minecraft?lang=en', 'feed'],
+  ['tiktok', 'https://www.tiktok.com/live/following', 'feed'],
   ['tiktok', 'https://www.tiktok.com/@user/video/7123456789', '7123456789'],
   ['tiktok', 'https://www.tiktok.com/@user/photo/7123456789', '7123456789'],
   ['tiktok', 'https://www.tiktok.com/@user', null],
+  ['tiktok', 'https://www.tiktok.com/tax', null],
+  ['tiktok', 'https://www.tiktok.com/live/category/gaming', null],
+  ['tiktok', 'https://www.tiktok.com/live/studio/help/article/x', null],
   ['tiktok', 'https://www.tiktok.com/search/video?q=cats', null],
   ['instagram', 'https://www.instagram.com/', 'feed'],
   ['instagram', 'https://www.instagram.com/explore/', 'feed'],
@@ -77,22 +101,35 @@ const CASES = [
   ['reddit', 'https://www.reddit.com/r/popular/', 'feed'],
   ['reddit', 'https://old.reddit.com/r/All/', 'feed'],
   ['reddit', 'https://old.reddit.com/r/all-pics/', 'feed'],
+  ['reddit', 'https://www.reddit.com/news/', 'feed'],
+  ['reddit', 'https://www.reddit.com/news?feed=news', 'feed'],
+  ['reddit', 'https://www.reddit.com/t/technology/', 'feed'],
   ['reddit', 'https://www.reddit.com/r/allergies/', null],
+  ['reddit', 'https://www.reddit.com/r/news/', null],
   ['reddit', 'https://www.reddit.com/r/AskHistorians/comments/1abcde/why_did/', '1abcde'],
   ['reddit', 'https://www.reddit.com/r/AskHistorians/', null],
   ['reddit', 'https://www.reddit.com/user/spez/', null],
   ['facebook', 'https://www.facebook.com/', 'feed'],
   ['facebook', 'https://m.facebook.com/home.php', 'feed'],
   ['facebook', 'https://www.facebook.com/watch/', 'feed'],
+  ['facebook', 'https://de-de.facebook.com/watch/', 'feed'],
+  ['facebook', 'https://www.facebook.com/video/', 'feed'],
+  ['facebook', 'https://www.facebook.com/watch/live/', 'feed'],
   ['facebook', 'https://www.facebook.com/watch/?v=123456', '123456'],
+  ['facebook', 'https://www.facebook.com/watch/live/?ref=watch_permalink&v=1647359463450220', '1647359463450220'],
   ['facebook', 'https://www.facebook.com/reel/987654', '987654'],
   ['facebook', 'https://www.facebook.com/somepage/posts/pfbid0abc', 'pfbid0abc'],
+  ['facebook', 'https://www.facebook.com/groups/164828000315060/permalink/764967300301124/', '764967300301124'],
+  ['facebook', 'https://www.facebook.com/stories/107066907747341/UzpfSVNDOjYzOTAwMDk0OTIwOTE5Mw==/', '107066907747341'],
   ['facebook', 'https://www.facebook.com/permalink.php?story_fbid=555&id=1', '555'],
   ['facebook', 'https://www.facebook.com/photo/?fbid=111&set=pcb.999', 'pcb.999'],
   ['facebook', 'https://www.facebook.com/photo/?fbid=112&set=pcb.999', 'pcb.999'],
   ['facebook', 'https://www.facebook.com/photo/?fbid=113', '113'],
   ['facebook', 'https://www.facebook.com/zuck', null],
+  ['facebook', 'https://www.facebook.com/stories/create/', null],
   ['threads', 'https://www.threads.com/', 'feed'],
+  ['threads', 'https://www.threads.com/for_you/', 'feed'],
+  ['threads', 'https://www.threads.com/global', 'feed'],
   ['threads', 'https://www.threads.com/@zuck/post/C0deAbc', 'C0deAbc'],
   ['threads', 'https://www.threads.com/custom_feed/12345', 'feed'],
   ['threads', 'https://www.threads.com/@zuck', null],
@@ -101,7 +138,10 @@ const CASES = [
   ['bluesky', 'https://bsky.app/profile/jay.bsky.team/post/3abc', '3abc'],
   ['bluesky', 'https://bsky.app/profile/jay.bsky.team', null],
   ['linkedin', 'https://www.linkedin.com/feed/', 'feed'],
+  ['linkedin', 'https://www.linkedin.com/feed/foryou/', 'feed'],
+  ['linkedin', 'https://www.linkedin.com/feed/network/', 'feed'],
   ['linkedin', 'https://www.linkedin.com/posts/someone_activity-123-abc', 'someone_activity-123-abc'],
+  ['linkedin', 'https://www.linkedin.com/feed/update/urn:li:activity:1/', 'urn:li:activity:1'],
   ['linkedin', 'https://www.linkedin.com/in/someone/', null],
 ];
 
@@ -113,16 +153,23 @@ for (const [id, url, want] of CASES) {
   });
 }
 
-// search results and profiles are free of the scroll budget; feeds, items and the sites' other pages are not
+// search results and profiles are free of the scroll budget; feeds, items, hashtag pages, searches the site starts
+// from a link and the sites' other pages are not
 const FREE = [
   ['youtube', 'https://www.youtube.com/results?search_query=cats', true],
   ['youtube', 'https://www.youtube.com/@mkbhd/videos', true],
   ['youtube', 'https://www.youtube.com/channel/UC123', true],
   ['youtube', 'https://www.youtube.com/feed/subscriptions', false],
   ['youtube', 'https://www.youtube.com/watch?v=abc', false],
+  ['youtube', 'https://www.youtube.com/hashtag/funny', false],
   ['x', 'https://x.com/search?q=cats&src=typed_query', true],
+  ['x', 'https://x.com/search?q=cats&src=recent_search_click', true],
   ['x', 'https://x.com/jack', true],
   ['x', 'https://x.com/jack/media', true],
+  ['x', 'https://x.com/search?q=%23Teapot&src=trend_click&vertical=trends', false],
+  ['x', 'https://x.com/search?q=Teapot&src=promoted_trend_click', false],
+  ['x', 'https://x.com/search?q=%24TSLA&src=cashtag_click', false],
+  ['x', 'https://x.com/hashtag/Teapot?src=hashtag_click', false],
   ['x', 'https://x.com/jack/status/20', false],
   ['x', 'https://x.com/notifications', false],
   ['x', 'https://x.com/i/bookmarks', false],
@@ -131,6 +178,7 @@ const FREE = [
   ['tiktok', 'https://www.tiktok.com/@user', true],
   ['tiktok', 'https://www.tiktok.com/@user/video/7123456789', false],
   ['tiktok', 'https://www.tiktok.com/foryou', false],
+  ['tiktok', 'https://www.tiktok.com/tag/fyp', false],
   ['instagram', 'https://www.instagram.com/explore/search/keyword/?q=cats', true],
   ['instagram', 'https://www.instagram.com/natgeo/', true],
   ['instagram', 'https://www.instagram.com/natgeo/reels/', true],
@@ -138,6 +186,7 @@ const FREE = [
   ['instagram', 'https://www.instagram.com/direct/inbox/', false],
   ['instagram', 'https://www.instagram.com/reels/', false],
   ['instagram', 'https://www.instagram.com/explore/', false],
+  ['instagram', 'https://www.instagram.com/explore/tags/nature/', false],
   ['reddit', 'https://www.reddit.com/search/?q=cats', true],
   ['reddit', 'https://www.reddit.com/r/aww/search/?q=cats', true],
   ['reddit', 'https://www.reddit.com/user/spez/submitted/', true],
@@ -147,12 +196,18 @@ const FREE = [
   ['facebook', 'https://www.facebook.com/profile.php?id=4', true],
   ['facebook', 'https://www.facebook.com/marketplace', false],
   ['facebook', 'https://www.facebook.com/groups/feed/', false],
+  ['facebook', 'https://www.facebook.com/video/', false],
   ['threads', 'https://www.threads.com/search?q=cats', true],
   ['threads', 'https://www.threads.com/@zuck', true],
   ['threads', 'https://www.threads.com/@zuck/post/C0deAbc', false],
+  ['threads', 'https://www.threads.com/search?q=cats&serp_type=tags&tag_id=1', false],
   ['bluesky', 'https://bsky.app/search?q=cats', true],
   ['bluesky', 'https://bsky.app/profile/jay.bsky.team', true],
   ['bluesky', 'https://bsky.app/profile/jay.bsky.team/post/3abc', false],
+  // bare, empty or tab-only: bluesky's explore page
+  ['bluesky', 'https://bsky.app/search', false],
+  ['bluesky', 'https://bsky.app/search?q=', false],
+  ['bluesky', 'https://bsky.app/search?tab=user', false],
   ['linkedin', 'https://www.linkedin.com/search/results/all/?keywords=cats', true],
   ['linkedin', 'https://www.linkedin.com/in/someone/', true],
   ['linkedin', 'https://www.linkedin.com/jobs/', false],
@@ -189,6 +244,16 @@ test('search and profile urls are site-relative and encoded', () => {
   assert.equal(SITES.bluesky.profile('jay.example.com'), '/profile/jay.example.com');
 });
 
+// a link that is a feed would be turned into a load that is blocked again: a dead end, worst for "log in" while the
+// site's front page is its log-in form
+test('block screen links never lead to a feed', () => {
+  for (const [id, site] of Object.entries(SITES)) {
+    for (const [label, link] of [['my profile', site.me], ...site.links].filter(([, link]) => link)) {
+      assert.equal(feedOf(id, new URL(link, 'https://example.com')), null, `${id} ${label}`);
+    }
+  }
+});
+
 test('looser: what waits and what applies at once', () => {
   const base = mergeSettings({ version: 2 });
   const with_ = (patch) => mergeSettings({ version: 2, ...patch });
@@ -205,6 +270,11 @@ test('looser: what waits and what applies at once', () => {
 test('reddit wildcard host: language subdomains count, unrelated subdomains do not', () => {
   for (const host of ['www.reddit.com', 'old.reddit.com', 'en.reddit.com', 'de.reddit.com']) assert.equal(siteFor(host), 'reddit', host);
   for (const host of ['ads.reddit.com', 'developers.reddit.com', 'reddit.com.evil.example']) assert.equal(siteFor(host), undefined, host);
+});
+
+test('facebook wildcard host: locale subdomains count, unrelated subdomains do not', () => {
+  for (const host of ['www.facebook.com', 'web.facebook.com', 'm.facebook.com', 'de-de.facebook.com', 'es-la.facebook.com']) assert.equal(siteFor(host), 'facebook', host);
+  for (const host of ['business.facebook.com', 'l.facebook.com', 'facebook.com', 'facebook.com.evil.example']) assert.equal(siteFor(host), undefined, host);
 });
 
 test('conversations are told apart from feeds and profiles', () => {
