@@ -2,6 +2,10 @@
 
 newest first. each version's section becomes its github release notes.
 
+## 0.8.4
+
+- a submit button next to never mind in the unlock challenge: the number pad on iphones has no enter key
+
 ## 0.8.3
 
 - the extra minute lets you finish: a video still playing when it runs out plays to its end, however long

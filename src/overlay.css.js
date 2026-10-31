@@ -257,6 +257,10 @@ var OVERLAY_CSS = `
   font-weight: 600;
 }
 #dis2tract button.d2t-back:active { transform: scale(0.98); } /* a wide button presses in less */
+/* the challenge's way back and its answer, side by side */
+#dis2tract .d2t-actions { display: flex; gap: 10px; margin-top: 16px; }
+#dis2tract .d2t-actions button.d2t-back { margin-top: 0; }
+#dis2tract button.d2t-go { background: color-mix(in srgb, var(--d2t-accent) 18%, var(--d2t-card)); }
 #dis2tract p.d2t-sentence {
   max-width: none;
   padding: 14px 18px;

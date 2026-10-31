@@ -1067,6 +1067,17 @@ test('full-width digits from a japanese or chinese ime count as the number they 
   assert.equal(t.reason(), null);
 });
 
+test('the submit button answers: a phone\x27s number pad has no enter key', async () => {
+  const t = boot('https://x.com/home');
+  await settle();
+  vm.runInContext('Math.random = () => 0.5', t.ctx); // arithmetic: 31 × 6 + 50
+  const { input } = startChallenge(t, 'x');
+  type(input, '236');
+  t.button('submit').fire('click');
+  await settle();
+  assert.equal(t.reason(), null);
+});
+
 test('only text typed one character at a time counts: pastes in any form are undone or ignored', async () => {
   const t = boot('https://x.com/home');
   await settle();

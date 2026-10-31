@@ -81,7 +81,7 @@ sometimes you do want the feed. you can unlock it, but slowly, on purpose:
    - count one letter in a line of words
 
    only typing counts, one character at a time. pastes, drops, keyboard clipboard chips, dictation and swipe typing are undone, and text that another extension slips in (one that re-enables right click and paste) is thrown away on enter.
-3. **a wrong enter costs 30 seconds**: the sheet says it was wrong (math and counting show the right number), waits, then brings a new challenge. closing and reopening the sheet doesn't skip the wait. a typing challenge opens by itself the moment the text is right, so enter on a typo counts as wrong. full-width digits (chinese, japanese) and arabic or persian digits count as numbers, and page translation leaves the text to type alone.
+3. **a wrong answer costs 30 seconds**: answer with enter or the submit button. the sheet says it was wrong (math and counting show the right number), waits, then brings a new challenge. closing and reopening the sheet doesn't skip the wait. a typing challenge opens by itself the moment the text is right, so enter on a typo counts as wrong. full-width digits (chinese, japanese) and arabic or persian digits count as numbers, and page translation leaves the text to type alone.
 
 escape closes the sheet. once unlocked, a pill at the top shows the time left; in the last 30 seconds it counts down in red. under the unlock button, the block screen says how many unlocks are left today.
 

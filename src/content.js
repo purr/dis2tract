@@ -346,10 +346,12 @@
         submit();
       },
     }, input);
-    const ask = `${c.ask}. a wrong enter means a new one in ${UNLOCK.penaltySeconds} s.`;
+    const ask = `${c.ask}. a wrong answer means a new one in ${UNLOCK.penaltySeconds} s.`;
     // translate=no: a page translator (firefox's own takes in all of <html> on a stopped page, which has no <body>)
     // replaced the very words the answer is checked against
-    sheet.replaceChildren(h('p', {}, ask), h('p', { class: 'd2t-sentence', id: 'dis2tract-show', translate: 'no' }, c.show), form, neverMind(close));
+    // a button to answer beside the way back: a phone's number pad (ios) has no enter key
+    const go = h('button', { type: 'button', class: 'd2t-back d2t-go', onclick: submit }, 'submit');
+    sheet.replaceChildren(h('p', {}, ask), h('p', { class: 'd2t-sentence', id: 'dis2tract-show', translate: 'no' }, c.show), form, h('div', { class: 'd2t-actions' }, neverMind(close), go));
     input.focus();
   }
 
