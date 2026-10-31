@@ -13,6 +13,7 @@ var DEFAULTS = {
   bedtimeFrom: 23,
   bedtimeTo: 5,
   chime: true, // a clock chime when a block appears while browsing
+  stopAutoplay: true, // a next video the site starts by itself waits paused, a clip it loops plays once
   cleanLinks: true, // links copied or opened on the sites lose their tracking, and x's t.co (links.js, background.js)
 };
 // [min, max] of each number setting; the options page builds its inputs from this, loading clamps older saves.
@@ -35,6 +36,7 @@ var UNLOCK = {
   extendMinutes: 1,
   extendGraceMinutes: 2,
   extendedCooldownMinutes: 30,
+  finishSeconds: 180, // an unlock that runs out under a video ending this soon lets it end first
 };
 // a change that loosens anything waits this long before it applies; tightening applies at once
 var LOOSEN_DELAY_MINUTES = 10;
@@ -48,14 +50,15 @@ function mergeSettings(saved) {
 }
 
 // true when next lets more through than current: a site switched off, a feed let through, a limit raised or
-// turned off (0), a shorter unlock sentence, or a shorter bedtime. tweaks are neither looser nor tighter.
+// turned off (0), a shorter unlock sentence, a shorter bedtime, or autoplay let back on. tweaks are neither looser nor tighter.
 const feedKeys = () => Object.entries(SITES).flatMap(([id, site]) => site.feeds.map(([key]) => `${id}.${key}`));
 function looser(next, current) {
   const limit = (key) => (next[key] === 0 ? current[key] !== 0 : current[key] !== 0 && next[key] > current[key]);
   return Object.entries(next.sites).some(([id, on]) => on === false && current.sites[id] !== false)
     || feedKeys().some((key) => next.toggles[key] === false && current.toggles[key] !== false)
     || limit('scrollScreens') || limit('chainLimit') || next.sentenceWords < current.sentenceWords
-    || next.bedtimeFrom > current.bedtimeFrom || next.bedtimeTo < current.bedtimeTo;
+    || next.bedtimeFrom > current.bedtimeFrom || next.bedtimeTo < current.bedtimeTo
+    || (!next.stopAutoplay && current.stopAutoplay);
 }
 
 // the part of a saved change that applies at once: everything in next except what loosens, which keeps its
@@ -70,6 +73,7 @@ function tighterPart(next, live) {
   };
   for (const id of Object.keys(n.sites)) if (n.sites[id] === false && c.sites[id] !== false) keep(out.sites, id, live?.sites?.[id]);
   for (const key of feedKeys()) if (n.toggles[key] === false && c.toggles[key] !== false) keep(out.toggles, key, live?.toggles?.[key]);
+  if (!n.stopAutoplay && c.stopAutoplay) keep(out, 'stopAutoplay', live?.stopAutoplay);
   for (const key of Object.keys(LIMITS)) {
     if (looser({ ...c, [key]: n[key] }, c)) keep(out, key, c[key] === DEFAULTS[key] ? undefined : c[key]);
   }

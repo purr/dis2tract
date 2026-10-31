@@ -786,6 +786,117 @@ test('a new instance of the script (an update or reload) wraps the page\'s own p
   assert.equal(update.doc.activeElement, field, 'and its own focus()');
 });
 
+test('autoplay: the next video the site starts by itself waits paused until input; loops, playlists and picks play on', async () => {
+  const t = boot('https://www.youtube.com/watch?v=a');
+  await settle();
+  t.play();
+  t.clock.now += 10 * MIN; // the video plays out, nobody at the page
+  t.nav('https://www.youtube.com/watch?v=b');
+  const next = t.play();
+  assert.equal(next.paused, true, 'the site moved on by itself: the next video waits');
+  t.touch();
+  assert.equal(t.play().paused, false, 'any input lets it play');
+  t.clock.now += 10 * MIN;
+  t.touch(); // the user opens a playlist
+  t.nav('https://www.youtube.com/watch?v=c&list=PL1');
+  t.clock.now += 10 * MIN;
+  t.nav('https://www.youtube.com/watch?v=d&list=PL1');
+  assert.equal(t.play().paused, false, 'a playlist is one item and plays on');
+  t.clock.now += 10 * MIN;
+  t.touch(); // a click on the next video
+  t.nav('https://www.youtube.com/watch?v=e');
+  assert.equal(t.play().paused, false, 'a video the user picked plays');
+  const off = boot('https://www.youtube.com/watch?v=a', { settings: { version: 2, stopAutoplay: false } });
+  await settle();
+  off.clock.now += 10 * MIN;
+  off.nav('https://www.youtube.com/watch?v=b');
+  assert.equal(off.play().paused, false, 'switched off in settings');
+});
+
+test('a clip the site starts over by itself plays once with nobody at the page; youtube\'s watch page loops are the user\'s', async () => {
+  const t = boot('https://www.tiktok.com/@someone/video/1');
+  await settle();
+  const clip = t.play({ duration: 15, currentTime: 0 });
+  t.touch(); // swiped onto it
+  clip.currentTime = 14;
+  t.tick();
+  clip.currentTime = 0.3;
+  t.tick();
+  assert.equal(clip.paused, false, 'within 10 s of input it loops on');
+  const next = t.play({ duration: 200, currentTime: 50 });
+  t.clock.now += 20_000;
+  clip.currentTime = 14;
+  t.tick();
+  clip.currentTime = 0.2;
+  t.tick();
+  assert.equal(clip.paused, true, 'nobody at the page: it stops at its start');
+  assert.equal(next.paused, false, 'only that one: a video next to a looping gif plays on');
+  const ended = t.play({ duration: 10, currentTime: 9 });
+  t.tick();
+  Object.assign(ended, { currentTime: 10, ended: true, paused: true });
+  t.tick();
+  Object.assign(ended, { currentTime: 0, ended: false }); // a site that loops by hand: seek, then play()
+  t.win.wrappedJSObject.HTMLMediaElement.prototype.play.call(ended);
+  t.tick();
+  assert.equal(ended.paused, true, 'a loop done by hand stops too');
+  const loops = (url, settings) => {
+    const p = boot(url, settings && { settings });
+    return settle().then(() => {
+      const m = p.play({ duration: 200, currentTime: 199 });
+      p.tick();
+      p.clock.now += MIN;
+      m.currentTime = 0.1;
+      p.tick();
+      return !m.paused;
+    });
+  };
+  assert.equal(await loops('https://www.youtube.com/watch?v=a'), true, 'a video looped on youtube\'s watch page plays on');
+  assert.equal(await loops('https://www.youtube.com/shorts/a'), false, 'shorts loop by themselves');
+  assert.equal(await loops('https://www.tiktok.com/@someone/video/1', { version: 2, stopAutoplay: false }), true, 'switched off');
+});
+
+test('an unlock that runs out under a video ending soon lets it end first, once; a long one is cut', async () => {
+  const pill = (t) => t.doc.documentElement.children.find((c) => c.getAttribute('id') === 'dis2tract-left') ?? null;
+  const t = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  const clip = t.play({ duration: 30, currentTime: 0 });
+  await t.run(3 * MIN - 2000);
+  clip.currentTime = 10;
+  await t.run(3000);
+  assert.equal(t.reason(), null, 'the time is up, the clip plays to its end');
+  assert.equal(pill(t).textContent, 'last one');
+  const spent = t.data.spent.ms;
+  clip.currentTime = 25;
+  await t.run(2000);
+  assert.equal(t.reason(), null);
+  assert.equal(t.data.spent.ms, spent, 'the end is not unlock time');
+  Object.assign(clip, { currentTime: 30, ended: true, paused: true });
+  t.tick();
+  assert.equal(t.reason(), 'feed', 'then the block');
+  assert.equal(pill(t), null);
+  const stuck = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  const stalled = stuck.play({ duration: 30, currentTime: 0 });
+  await stuck.run(3 * MIN - 2000);
+  stalled.currentTime = 10;
+  await stuck.run(3000);
+  assert.equal(stuck.reason(), null);
+  await stuck.run(22_000);
+  assert.equal(stuck.reason(), 'feed', 'a player that never gets there is cut once its time is over');
+  const moved = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  moved.play({ duration: 30, currentTime: 20 });
+  await moved.run(3 * MIN + 1000);
+  assert.equal(moved.reason(), null);
+  moved.nav('https://www.tiktok.com/@someone/video/2');
+  assert.equal(moved.reason(), 'feed', 'the next video ends it');
+  const long = boot('https://www.tiktok.com/foryou', { unlocks: [{ site: 'tiktok', at: NOON }] });
+  await settle();
+  long.play({ duration: 3600, currentTime: 100 });
+  await long.run(3 * MIN + 1000);
+  assert.equal(long.reason(), 'feed', 'a long video is cut as before');
+});
+
 test('a block that appears while browsing fades in and chimes; the first paint and a redraw do neither', async () => {
   const t = boot('https://www.youtube.com/');
   assert.equal(t.overlay().getAttribute('data-enter'), null, 'a page load covers the feed at once');

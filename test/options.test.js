@@ -66,6 +66,7 @@ function tab(store, { privateWindows }) {
     new El('p', { id: 'limits-note' }),
     new El('section', { id: 'screen' }),
     new El('input', { type: 'checkbox', name: 'chime' }),
+    new El('input', { type: 'checkbox', name: 'stopAutoplay' }),
     new El('div', { id: 'sites' }),
     new El('output'),
   );

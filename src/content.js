@@ -51,6 +51,11 @@
   let feedAt = 0; // the last moment the url was still a feed
   let feedPassed = false; // background.js reported a feed address passed through between two looks
   let traversed = false; // the url change came from back/forward
+  let held = false; // the site's autoplay brought this item: no player starts until the next input
+  let userLoops = false; // a player starting over on this url was looped by the user (sites.js)
+  let wasOpen = false; // the last look let a blocked page through
+  let finish = null; // the unlock ran out under a video near its end: { href, until, media: player → last position }
+  let graced = null; // the start of the unlock whose video was let end: once each
   let unlimited = false; // a conversation, search results or a profile: no scroll budget
   let tweaked = null; // the url the site's tweaks are done for
   let undone = null; // the url the switched-off tweaks were taken back on
@@ -61,6 +66,7 @@
   const moreOn = new Map(); // per url, the screens keep scrolling added to its budget
   const lastTop = new WeakMap();
   const watchedRoots = new WeakSet(); // shadow roots with a play listener
+  const pos = new WeakMap(); // each playing player's last position and source, to see it start over
   let pauseTicks = 0;
   let overlay = null;
   // the block screen's element in the page. everything on it sits in a closed shadow root, so site scripts can't read
@@ -510,11 +516,15 @@
     root.toggleAttribute('data-dis2tract-blocked', true); // no mutation when already set; this runs every tick
   }
 
+  // someone used the page a moment ago: a block that appears now is theirs to hear, an item change was their pick
+  function touched() {
+    return Date.now() - lastInput <= UNLOCK.idleSeconds * 1000;
+  }
+
   // the chime, played by background.js; only for a tab on screen, and only with someone at it: autoplay walked a
   // tab nobody touched for hours into the in-a-row limit, and the bell went off at night over a sleeping user
   function chime() {
-    const near = Date.now() - lastInput <= UNLOCK.idleSeconds * 1000;
-    if (settings.chime && near && document.visibilityState === 'visible') browser.runtime.sendMessage('chime');
+    if (settings.chime && touched() && document.visibilityState === 'visible') browser.runtime.sendMessage('chime');
   }
 
   function hide() {
@@ -536,16 +546,64 @@
     // the feed time, or the clock where it ends sooner: when the next unlock could start, or bedtime (an unlock
     // runs only outside it, so today's start of it is still ahead)
     const ms = on ? Math.min(left(), end(last) + cooldown(last) - now, new Date(now).setHours(settings.bedtimeFrom, 0, 0, 0) - now) : 0;
-    if (ms <= 0) {
+    if (ms <= 0 && !(on && finish)) {
       pill?.remove();
       pill = null;
       return;
     }
     pill ??= h('div', { id: 'dis2tract-left', role: 'timer', lang: 'en', dir: 'ltr' });
-    const text = ms > 30_000 ? `${Math.ceil(ms / 60_000)} min left` : `${Math.ceil(ms / 1000)} s left`;
+    // past its time, the video let end (finishing()) is the last one
+    const text = ms <= 0 ? 'last one' : ms > 30_000 ? `${Math.ceil(ms / 60_000)} min left` : `${Math.ceil(ms / 1000)} s left`;
     if (pill.textContent !== text) pill.textContent = text; // runs every tick: no mutation unless it changed
     pill.toggleAttribute('data-ending', ms <= 30_000);
     if (!pill.isConnected || pill.nextElementSibling) root.append(pill); // above <body>, like the overlay
+  }
+
+  // no player may start: the block screen is up, or autoplay brought this item
+  function quiet() {
+    return Boolean(overlay) || held;
+  }
+
+  // an unlock that runs out under a video ending within UNLOCK.finishSeconds lets it end first: a cut mid-video
+  // leaves a pull to come back for the end, and the end of a video is a natural place to stop. once per unlock and
+  // only on the page it was open on, until each player playing then ends, starts over, pauses or overruns its time.
+  // a longer video, a live stream or a text feed is cut at once
+  function finishing() {
+    const at = unlocks.at(-1)?.at;
+    if (!finish && wasOpen && graced !== at) {
+      const media = [...document.querySelectorAll('video, audio'), ...playing].filter((m) => !m.paused && !m.ended);
+      // NaN (no duration yet) and Infinity (live) never pass
+      const ends = media.map((m) => (m.duration - m.currentTime) / (m.playbackRate || 1));
+      if (media.length && ends.every((s) => s <= UNLOCK.finishSeconds)) {
+        graced = at;
+        finish = { href, until: Date.now() + Math.max(...ends) * 1000 + 1000, media: new Map(media.map((m) => [m, m.currentTime])) };
+      }
+    }
+    if (!finish) return false;
+    for (const [m, t] of finish.media) {
+      if (m.paused || m.ended || m.currentTime < t) finish.media.delete(m);
+      else finish.media.set(m, m.currentTime);
+    }
+    if (finish.media.size && href === finish.href && Date.now() < finish.until) return true;
+    finish = null;
+    return false;
+  }
+
+  // the players that went back since the last look, while playing or after they ended: firefox moves a looping
+  // player's position back to the start (MediaDecoder::GetPositionUpdateReason, 2026-10), and a site that loops by
+  // hand seeks it there after it ended. a paused one is forgotten: feeds rewind the players they scrolled past
+  function startedOver() {
+    const back = [];
+    for (const m of [...document.querySelectorAll('video, audio'), ...playing]) {
+      if (m.paused && !m.ended) {
+        pos.delete(m);
+        continue;
+      }
+      const was = pos.get(m);
+      if (was && was.src === m.currentSrc && m.currentTime < was.t) back.push(m);
+      pos.set(m, { t: m.currentTime, src: m.currentSrc });
+    }
+    return back;
   }
 
   // pauses every player, including ones inside shadow roots (reddit's), which neither document.querySelectorAll
@@ -561,7 +619,7 @@
       if (!shadow) continue;
       if (!watchedRoots.has(shadow)) {
         watchedRoots.add(shadow);
-        shadow.addEventListener('play', (e) => overlay && e.target.pause(), true);
+        shadow.addEventListener('play', (e) => quiet() && e.target.pause(), true);
       }
       pauseAll(shadow);
     }
@@ -614,12 +672,17 @@
     // the 3 s carry counts from the last moment the url was still a feed, so a slow router swap is caught too
     if (onFeedUrl) feedAt = Date.now();
     tweak();
+    // a clip the site starts over by itself plays once: with nobody at the page it stops at its start. only that
+    // player: a looping gif on x would otherwise pause the video being watched next to it
+    for (const m of startedOver()) if (settings.stopAutoplay && !userLoops && !touched()) m.pause();
     const reason = settings.sites[siteId] !== false && blocked();
     if (stopped && (!reason || unlocked())) return reopen();
-    const open = Boolean(reason) && unlocked();
+    const open = Boolean(reason) && (unlocked() || finishing());
+    wasOpen = open;
     if (open) {
       hide();
-      spend();
+      if (finish) stopSpending(); // the time a video is let end is past the unlock, not its minutes
+      else spend();
     } else {
       stopSpending();
       if (reason) show(reason);
@@ -642,7 +705,11 @@
   function onUrl() {
     const u = new URL(location.href);
     href = u.href.split('#')[0];
+    const before = key;
     key = site.itemKey(u);
+    // the site's autoplay: one item after another with nobody at the page (no input lately, not back/forward)
+    // starts paused, and stays so until the next input. a playlist keeps its key and plays on; loops: startedOver()
+    if (key !== before) held = Boolean(before && key) && settings.stopAutoplay && !traversed && !touched();
     const feed = feedOf(siteId, u, settings.toggles);
     onFeedUrl = Boolean(feed);
     if (feed) {
@@ -656,6 +723,7 @@
     feedPassed = false;
     traversed = false;
     unlimited = conversation(u) || site.free(u);
+    userLoops = Boolean(site.userLoops?.(u));
     // back to an earlier item steps out of the chain instead of growing it, so the back button escapes a block
     const seen = key ? chain.indexOf(key) : -1;
     if (!key) chain.length = 0;
@@ -667,6 +735,7 @@
     scrolled = scrolledOn.get(href) ?? 0;
     if (ready) saveTrail();
     evaluate();
+    if (held) pauseAll();
   }
 
   // settings changed under an unchanged url: judge the feed again with the new switches, keep the rest
@@ -719,7 +788,10 @@
     if (ready) saveTrail();
   });
   for (const type of ['pointerdown', 'wheel', 'touchmove', 'keydown']) {
-    window.addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
+    window.addEventListener(type, () => {
+      lastInput = Date.now();
+      held = false;
+    }, { capture: true, passive: true });
   }
 
   // registered at document_start, so these run before any page listener: site shortcuts (k, j, arrows)
@@ -732,16 +804,16 @@
       if (e.type === 'keydown' && e.key === 'Escape' && !e.isComposing) closeSheet?.();
     }, true);
   }
-  document.addEventListener('play', (e) => overlay && e.target.pause(), true);
+  document.addEventListener('play', (e) => quiet() && e.target.pause(), true);
   // players in no document at all (tiktok's photo-post music is a new Audio() that is never attached) are out of
-  // reach of every pause path above. so the page's own play() is wrapped: while the block screen is up nothing
-  // starts, and whatever started before is remembered to be paused. the set is emptied on every pause, so it only
+  // reach of every pause path above. so the page's own play() is wrapped: while quiet() nothing starts, and
+  // whatever started before is remembered to be paused. the set is emptied on every pause, so it only
   // ever holds what is playing now
   const playing = new Set();
   wrap(window.wrappedJSObject.HTMLMediaElement.prototype, HTMLMediaElement.prototype.play, 'play', (play) => function () {
     // remembered only once play() or pause() accepted `this`: a non-media one (a page's tamper probe) stayed in the
     // set for good, counted as playing, and made pauseAll() throw before it paused players or left fullscreen
-    const started = overlay ? (this.pause(), window.wrappedJSObject.Promise.resolve()) : play(this);
+    const started = quiet() ? (this.pause(), window.wrappedJSObject.Promise.resolve()) : play(this);
     playing.add(this);
     return started;
   });

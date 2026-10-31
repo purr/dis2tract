@@ -265,6 +265,8 @@ test('looser: what waits and what applies at once', () => {
   assert.ok(looser(with_({ scrollScreens: 30 }), base), 'a limit raised');
   assert.ok(looser(with_({ chainLimit: 0 }), base), 'a limit turned off');
   assert.ok(looser(with_({ sentenceWords: 12 }), base), 'a shorter sentence');
+  assert.ok(looser(with_({ stopAutoplay: false }), base), 'autoplay let back on');
+  assert.ok(!looser(base, with_({ stopAutoplay: false })), 'autoplay stopped again');
   assert.ok(!looser(with_({ scrollScreens: 5, chainLimit: 2, sentenceWords: 30 }), base), 'all tighter');
   assert.ok(!looser(with_({ toggles: { 'youtube.theater': false }, handles: { x: 'jack' }, note: 'hi' }), base), 'tweaks, handles and the note');
   assert.ok(!looser(base, with_({ scrollScreens: 0 })), 'turning a limit back on');

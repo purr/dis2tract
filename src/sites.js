@@ -6,6 +6,8 @@
 // of everyone's posts, not something typed: it keeps the budget. a typed "#x" search stays free.
 // me: a url that opens the logged-in user's own profile; sites without one get a handle field in settings.
 // route: turns special search-box input into a path (reddit's r/name).
+// userLoops: a player starting over on this url was looped by the user (youtube's watch page, through its menu), so
+// it plays on; everywhere else a clip that starts over was looped by the site.
 // links: the block screen's ways on. logged out, the / of instagram, facebook and linkedin is their log-in form,
 // blocked as the home feed, so they link to it ("log in"); logged in, that address opens no feed of its own.
 // tweaks: optional extras with a label and a default; run(url) returns true once done for that page, undo(url)
@@ -46,6 +48,8 @@ var SITES = {
     // a typed "#funny" stays at /results; its hashtag link opens /hashtag/funny, every channel's videos with the tag
     // (525M for #funny) in a grid that pages on (#cctv9), which keeps the budget (curl, 2026-10)
     free: (u) => /^\/(results|@[^/]+|(channel|c|user)\/[^/]+)(\/|$)/.test(path(u)),
+    // shorts and clips loop by themselves; a watch page only through the player's own menu
+    userLoops: (u) => path(u) === '/watch',
     me: '/profile', // login-gated redirect to your own channel
     links: [['subscriptions', '/feed/subscriptions'], ['history', '/feed/history'], ['playlists', '/feed/playlists']],
     tweaks: { theater: { label: 'theater mode on every video', on: true, run: theater, undo: unwide } },

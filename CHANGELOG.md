@@ -4,6 +4,8 @@ newest first. each version's section becomes its github release notes.
 
 ## 0.8.2
 
+- no autoplay: when a video ends, the next one the site starts by itself waits paused, and a clip the site loops plays once; a playlist you chose and a video you loop on youtube play on (settings → videos)
+- an unlock that runs out under a video ending within 3 minutes lets it play to its end instead of cutting it off
 - the chime is two soft notes instead of the five nights at freddy's bell
 - the chime stays quiet when nobody touched the page in the last 10 seconds: autoplay running into a block at night no longer rings it
 
