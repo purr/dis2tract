@@ -55,7 +55,7 @@
   let userLoops = false; // a player starting over on this url was looped by the user (sites.js)
   let wasOpen = false; // the last look let a blocked page through
   let finish = null; // the unlock ran out under a video near its end: { href, until, media: player → last position }
-  let graced = null; // the start of the unlock whose video was let end: once each
+  let graced = null; // the unlock whose video was let end (its start, + once extended): once each, once more after the extra minute
   let unlimited = false; // a conversation, search results or a profile: no scroll budget
   let tweaked = null; // the url the site's tweaks are done for
   let undone = null; // the url the switched-off tweaks were taken back on
@@ -224,7 +224,7 @@
     if (canExtend()) {
       box.append(
         h('button', { type: 'button', onclick: extend }, `+${UNLOCK.extendMinutes} min to finish up`),
-        h('p', { class: 'd2t-small' }, `the next unlock then waits ${UNLOCK.extendedCooldownMinutes} min instead of ${UNLOCK.cooldownMinutes}.`),
+        h('p', { class: 'd2t-small' }, `a video still playing then plays to its end. the next unlock waits ${UNLOCK.extendedCooldownMinutes} min instead of ${UNLOCK.cooldownMinutes}.`),
       );
       return box;
     }
@@ -567,14 +567,18 @@
   // an unlock that runs out under a video ending within UNLOCK.finishSeconds lets it end first: a cut mid-video
   // leaves a pull to come back for the end, and the end of a video is a natural place to stop. once per unlock and
   // only on the page it was open on, until each player playing then ends, starts over, pauses or overruns its time.
-  // a longer video, a live stream or a text feed is cut at once
+  // a longer video, a live stream or a text feed is cut at once. the extra minute is taken to finish up, and a cap
+  // cut the video it was taken for all the same: after it, the video playing then ends however long it is (not at
+  // bedtime, which keeps the cap)
   function finishing() {
-    const at = unlocks.at(-1)?.at;
+    const last = unlocks.at(-1);
+    const at = last && `${last.at}${last.extended ? '+' : ''}`;
+    const cap = last?.extended && !late() ? Infinity : UNLOCK.finishSeconds;
     if (!finish && wasOpen && graced !== at) {
       const media = [...document.querySelectorAll('video, audio'), ...playing].filter((m) => !m.paused && !m.ended);
-      // NaN (no duration yet) and Infinity (live) never pass
       const ends = media.map((m) => (m.duration - m.currentTime) / (m.playbackRate || 1));
-      if (media.length && ends.every((s) => s <= UNLOCK.finishSeconds)) {
+      // NaN (no duration yet) and Infinity (live) never pass
+      if (media.length && ends.every((s) => Number.isFinite(s) && s <= cap)) {
         graced = at;
         finish = { href, until: Date.now() + Math.max(...ends) * 1000 + 1000, media: new Map(media.map((m) => [m, m.currentTime])) };
       }
@@ -607,7 +611,8 @@
   }
 
   // pauses every player, including ones inside shadow roots (reddit's), which neither document.querySelectorAll
-  // nor a play listener on the document reach. firefox lets content scripts into closed roots too.
+  // nor a play listener on the document reach. firefox lets content scripts into closed roots too; webkit (orion)
+  // has no openOrClosedShadowRoot and reaches the open ones only
   function pauseAll(scope = document) {
     if (scope === document) {
       for (const m of playing) m.pause();
@@ -615,7 +620,7 @@
     }
     scope.querySelectorAll('video, audio').forEach((m) => m.pause());
     for (const el of scope.querySelectorAll('*')) {
-      const shadow = el.openOrClosedShadowRoot;
+      const shadow = el.openOrClosedShadowRoot ?? el.shadowRoot;
       if (!shadow) continue;
       if (!watchedRoots.has(shadow)) {
         watchedRoots.add(shadow);
@@ -810,7 +815,7 @@
   // whatever started before is remembered to be paused. the set is emptied on every pause, so it only
   // ever holds what is playing now
   const playing = new Set();
-  wrap(window.wrappedJSObject.HTMLMediaElement.prototype, HTMLMediaElement.prototype.play, 'play', (play) => function () {
+  if (xrays) wrap(window.wrappedJSObject.HTMLMediaElement.prototype, HTMLMediaElement.prototype.play, 'play', (play) => function () {
     // remembered only once play() or pause() accepted `this`: a non-media one (a page's tamper probe) stayed in the
     // set for good, counted as playing, and made pauseAll() throw before it paused players or left fullscreen
     const started = quiet() ? (this.pause(), window.wrappedJSObject.Promise.resolve()) : play(this);
@@ -820,7 +825,7 @@
   // pages call focus() on their own players and feeds all the time (tiktok, youtube, x). behind the block screen
   // that pulled the cursor out of the answer field mid-word, so while it is up such calls are ignored. our own
   // focus() calls go through firefox's xray to the original method and are not affected
-  wrap(window.wrappedJSObject.HTMLElement.prototype, HTMLElement.prototype.focus, 'focus', (focus) => function (options) {
+  if (xrays) wrap(window.wrappedJSObject.HTMLElement.prototype, HTMLElement.prototype.focus, 'focus', (focus) => function (options) {
     if (overlay && !overlay.contains(this)) return;
     return focus(this, options);
   });

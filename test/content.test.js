@@ -895,6 +895,39 @@ test('an unlock that runs out under a video ending soon lets it end first, once;
   long.play({ duration: 3600, currentTime: 100 });
   await long.run(3 * MIN + 1000);
   assert.equal(long.reason(), 'feed', 'a long video is cut as before');
+  // the extra minute is taken to finish up: after it, the video playing then ends however long it is
+  const ranOut = () => ({ unlocks: [{ site: 'tiktok', at: NOON - 10 * MIN, doneAt: NOON - 30_000 }], spent: { at: NOON - 10 * MIN, ms: 3 * MIN } });
+  const extra = boot('https://www.tiktok.com/foryou', ranOut());
+  await settle();
+  extra.touch();
+  extra.button('+1 min').fire('click');
+  await settle();
+  const film = extra.play({ duration: 3600, currentTime: 100 });
+  await extra.run(MIN + 1000);
+  assert.equal(extra.reason(), null, 'past the extra minute, the long video plays on');
+  assert.equal(pill(extra).textContent, 'last one');
+  film.currentTime = 3000;
+  await extra.run(2000);
+  assert.equal(extra.reason(), null);
+  Object.assign(film, { currentTime: 3600, ended: true, paused: true });
+  extra.tick();
+  assert.equal(extra.reason(), 'feed', 'then the block');
+  const live = boot('https://www.tiktok.com/foryou', ranOut());
+  await settle();
+  live.touch();
+  live.button('+1 min').fire('click');
+  await settle();
+  live.play({ duration: Infinity, currentTime: 100 });
+  await live.run(MIN + 1000);
+  assert.equal(live.reason(), 'feed', 'a live stream never ends, so it is cut');
+});
+
+test('a browser without firefox\'s xrays (orion, on webkit) still draws the block screen and unlocks', async () => {
+  const t = boot('https://www.youtube.com/', {}, (doc) => { doc.defaultView.wrappedJSObject = undefined; });
+  await settle();
+  assert.equal(t.reason(), 'feed');
+  await t.setStorage({ unlocks: [{ site: 'youtube', at: NOON }] });
+  assert.equal(t.reason(), null);
 });
 
 test('a block that appears while browsing fades in and chimes; the first paint and a redraw do neither', async () => {

@@ -34,7 +34,7 @@ most blockers shut the whole site. then you need one video, one profile or one m
 
 ## install
 
-download the `.xpi` from the [latest release](https://github.com/purr/dis2tract/releases/latest) and open it in firefox; after that it updates itself. android, private windows and making it hard to uninstall: [install guide →](docs/install.md)
+download the `.xpi` from the [latest release](https://github.com/purr/dis2tract/releases/latest) and open it in firefox; after that it updates itself. android, orion (ios), private windows and making it hard to uninstall: [install guide →](docs/install.md)
 
 ## develop
 

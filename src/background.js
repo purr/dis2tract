@@ -500,14 +500,17 @@ const LABELED = [
   { urls: ['*://*.reddit.com/*'], types: ['main_frame', 'xmlhttprequest'], read: readReddit },
   { urls: ['*://*.bsky.network/xrpc/*', '*://public.api.bsky.app/xrpc/*'], types: ['xmlhttprequest'], read: readJson('bluesky', blueskyItem, blueskyMarked) },
 ];
-for (const { urls, types, read } of LABELED) {
+// webkit browsers that run firefox add-ons (orion) cannot read responses: there the marks go unread, t.co stays, and
+// nothing is registered, so a request never meets a listener that throws
+const readable = Boolean(browser.webRequest?.filterResponseData);
+if (readable) for (const { urls, types, read } of LABELED) {
   browser.webRequest.onBeforeRequest.addListener((details) => {
     if (details.tabId >= 0) read(details); // a request of no tab (a service worker) has no page to send anywhere
   }, { urls, types }, ['blocking']);
 }
 // the rest of x's api (notifications, direct messages ...) carries t.co links too. only json: an answer is held whole
 // here, and an event stream never ends, so this waits for the headers (graphql goes through the label reader above)
-browser.webRequest.onHeadersReceived.addListener(({ requestId, tabId, url, responseHeaders }) => {
+if (readable) browser.webRequest.onHeadersReceived.addListener(({ requestId, tabId, url, responseHeaders }) => {
   if (!cleanLinks || tabId < 0 || url.includes('/i/api/graphql/')) return;
   const type = responseHeaders.find(({ name }) => name.toLowerCase() === 'content-type')?.value ?? '';
   if (!type.startsWith('application/json')) return;

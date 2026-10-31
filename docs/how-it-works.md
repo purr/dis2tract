@@ -88,11 +88,11 @@ escape closes the sheet. once unlocked, a pill at the top shows the time left; i
 | rule | value |
 | --- | --- |
 | one unlock | 3 min of feed on that site. they run only while a page the unlock lets through is on screen and in use: you scrolled, tapped or typed in the last 10 s, or a video plays (a muted one only within a minute of that). pause the video or leave with time left and it waits for you until the next unlock could start (23 min after unlocking), or until you take an unlock elsewhere |
-| a video at the end | when the time runs out, or bedtime starts, under a video that ends within 3 min, it plays to its end first, and the pill says last one. once per unlock. a longer video, a live stream or a text feed is cut at once, and moving on to the next video ends it |
+| a video at the end | when the time runs out, or bedtime starts, under a video that ends within 3 min, it plays to its end first, and the pill says last one. once per unlock, and once more after the extra minute, then however long the video is (not at bedtime). a longer video, a live stream or a text feed is cut at once, and moving on to the next video ends it |
 | between unlocks | 20 min after the time runs out (or would have, used in one go), across all sites |
 | per day | 10, across all sites |
 | bedtime | from 23:00 to 5:00 no unlock starts, and one still running ends then. a wait that would end inside bedtime ends with it. settings can start it earlier or end it later |
-| one more minute | offered once, for 2 min after the time runs out. the next unlock then waits 30 min from when you took it |
+| one more minute | offered once, for 2 min after the time runs out. a video still playing when it runs out plays to its end. the next unlock then waits 30 min from when you took it |
 
 these rules have no setting on purpose: a setting would be the way around them. they live in `UNLOCK` in `src/settings.js`. bedtime is the one exception, because settings can only make it longer.
 

@@ -55,7 +55,7 @@ function cleanText(text) {
   });
 
   // the sites' copy and share buttons write through the clipboard api
-  wrap(window.wrappedJSObject.Clipboard.prototype, Clipboard.prototype.writeText, 'writeText', (writeText) => function (text) {
+  if (xrays) wrap(window.wrappedJSObject.Clipboard.prototype, Clipboard.prototype.writeText, 'writeText', (writeText) => function (text) {
     return writeText(this, on ? cleanText(String(text)) : text);
   });
   // a copy of selected text, and buttons that copy a hidden field through execCommand('copy'): a field's selection

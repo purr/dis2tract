@@ -40,13 +40,18 @@ function paint(el, theme = {}) {
   for (const [k, v] of Object.entries(theme)) el.style.setProperty(k, v);
 }
 
+// firefox's xrays (wrappedJSObject, exportFunction) reach the page's own methods. webkit browsers that run firefox
+// add-ons (orion, on ios and macos) have none: reading window.wrappedJSObject.X threw there at startup, before the
+// block screen was ever drawn. so there the page keeps its own methods, and no wrapper is put over them
+var xrays = Boolean(globalThis.window?.wrappedJSObject);
+
 // puts a wrapper of ours over a page method. an exported wrapper dies with this script's sandbox (an extension
 // update, reload or disable), and a page calling it then throws until reload. so each wrapper carries the page's
 // own method along, and the next instance of this script wraps that one, never a dead wrapper of an old instance.
 // 0.7.0 and older left theirs without that mark: dead since that version's sandbox went, one passes for the page's
 // own method and throws on every call, so firefox's own method (`own`, read through the xray) stands in for it.
 // after a disable nothing comes next: the dead wrappers stay until the tab reloads. content scripts only
-// (exportFunction): content.js and links.js
+// (exportFunction): content.js and links.js, and only where `xrays` holds
 function wrap(proto, own, name, make) {
   const page = proto[name].dis2tractPage ?? proto[name];
   const call = (self, ...args) => {

@@ -11,6 +11,16 @@ firefox release only installs signed extensions. every release is signed by mozi
 
 after that, new versions install by themselves: firefox checks github once a day on desktop, every 12 hours on android. a version that asks for a new permission waits for your ok (desktop: the firefox menu; android: a notification). 0.5.0 to 0.7.0 can't update themselves: install the newest `.xpi` once the same way, over the old copy; settings and counts stay.
 
+## orion (ios, macos)
+
+orion, kagi's browser, runs firefox extensions. following kagi's docs (not tried on a device):
+
+1. orion → ••• → settings → extensions: turn firefox extensions on.
+2. open the [latest release](https://github.com/purr/dis2tract/releases/latest) in orion and download `dis2tract-<version>.xpi`.
+3. ••• → extensions → + → install from file → pick the `.xpi`.
+
+orion lacks some firefox apis, so a few things don't work there: adult marks on x, reddit and bluesky, real links in place of x's t.co, the theme colors (ios), links copied through a site's share button are not cleaned, a site can pull the cursor out of the answer field, and a video can start under the block screen if the site plays it from outside the page. feed blocking, unlocks, porn sites and the rest work. whether orion updates it by itself is not known: if a release doesn't arrive, install the new `.xpi` the same way.
+
 ## try it
 
 about:debugging → this firefox → "load temporary add-on…" → pick `manifest.json`, or the unsigned `.zip` of any build (see [builds and releases](development.md#builds-and-releases)). it stays until firefox restarts, and removing it wipes its settings and counts.
