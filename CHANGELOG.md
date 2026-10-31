@@ -2,6 +2,11 @@
 
 newest first. each version's section becomes its github release notes.
 
+## 0.8.2
+
+- the chime is two soft notes instead of the five nights at freddy's bell
+- the chime stays quiet when nobody touched the page in the last 10 seconds: autoplay running into a block at night no longer rings it
+
 ## 0.8.1
 
 - your theme's colors are no longer thrown out whole when its text is hard to read: the backgrounds stay, and only the text changes

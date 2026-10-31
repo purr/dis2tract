@@ -510,9 +510,11 @@
     root.toggleAttribute('data-dis2tract-blocked', true); // no mutation when already set; this runs every tick
   }
 
-  // the 6 am bell, played by background.js; only for a tab on screen
+  // the chime, played by background.js; only for a tab on screen, and only with someone at it: autoplay walked a
+  // tab nobody touched for hours into the in-a-row limit, and the bell went off at night over a sleeping user
   function chime() {
-    if (settings.chime && document.visibilityState === 'visible') browser.runtime.sendMessage('chime');
+    const near = Date.now() - lastInput <= UNLOCK.idleSeconds * 1000;
+    if (settings.chime && near && document.visibilityState === 'visible') browser.runtime.sendMessage('chime');
   }
 
   function hide() {

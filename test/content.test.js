@@ -305,6 +305,7 @@ function boot(url, stored = {}, setup = () => {}, session = null) {
       let stopped = false;
       const a = { localName: 'a', href: new URL(href, location.href).href, target: '', ...link };
       const e = { button: 0, detail: 1, composedPath: () => [a, root, doc, win], preventDefault() { stopped = true; }, stopImmediatePropagation() {}, ...extra };
+      t.touch(); // a browser sends pointerdown before every click
       for (const f of win.listeners.click ?? []) f(e);
       return stopped;
     },
@@ -792,6 +793,7 @@ test('a block that appears while browsing fades in and chimes; the first paint a
   assert.equal(t.overlay().getAttribute('data-enter'), null);
   assert.equal(t.chimes.length, 0);
   t.nav('https://www.youtube.com/@someone');
+  t.touch();
   t.nav('https://www.youtube.com/');
   assert.equal(t.overlay().getAttribute('data-enter'), '');
   assert.equal(t.chimes.length, 1);
@@ -804,13 +806,23 @@ test('a block that appears while browsing fades in and chimes; the first paint a
   assert.ok(t.sheet(), 'and an open unlock sheet stays');
   const quiet = boot('https://www.youtube.com/@someone', { settings: { version: 2, chime: false } });
   await settle();
+  quiet.touch();
   quiet.nav('https://www.youtube.com/');
   assert.equal(quiet.chimes.length, 0, 'switched off in settings');
   const hidden = boot('https://www.youtube.com/@someone');
   await settle();
   hidden.doc.visibilityState = 'hidden';
+  hidden.touch();
   hidden.nav('https://www.youtube.com/');
   assert.equal(hidden.chimes.length, 0, 'a tab out of sight stays quiet');
+  // autoplay walking an untouched tab onto a block: it shows, with no bell
+  const asleep = boot('https://www.youtube.com/@someone');
+  await settle();
+  asleep.touch();
+  asleep.clock.now += 10 * MIN; // far past UNLOCK.idleSeconds
+  asleep.nav('https://www.youtube.com/');
+  assert.equal(asleep.overlay().getAttribute('data-enter'), '', 'the block still fades in');
+  assert.equal(asleep.chimes.length, 0, 'nobody touched the page: no bell');
 });
 
 test('a cooldown ending under the open block screen keeps the search being typed; so does a redraw', async () => {
@@ -1684,9 +1696,15 @@ test('background: theme pairs become a document_start stylesheet and a storage m
     22: 'closed',
     23: null,
   };
-  class Audio {
-    constructor(src) { this.src = src; }
-    play() { played.push(this.src); }
+  // the chime's tones: each oscillator started is one note, by its pitch
+  class AudioContext {
+    currentTime = 0;
+    destination = {};
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: (next) => next }; }
+    createOscillator() {
+      const tone = { frequency: {}, connect: (next) => next, start: () => played.push(tone.frequency.value), stop() {} };
+      return tone;
+    }
   }
   const fakeBrowser = (withTheme) => ({
     runtime: {
@@ -1764,7 +1782,7 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   const timeouts = []; // run by hand, when the test lets that time pass
   const background = (withTheme) => {
     const ctx = vm.createContext({
-      browser: fakeBrowser(withTheme), document, console, Audio, URL, URLSearchParams, TextDecoder, fetch,
+      browser: fakeBrowser(withTheme), document, console, AudioContext, URL, URLSearchParams, TextDecoder, fetch,
       setInterval: () => 0, setTimeout: (f) => timeouts.push(f), Date: class extends Date { static now() { return clock.now; } },
     });
     // the background page loads settings.js first, as the manifest does
@@ -1848,16 +1866,13 @@ test('background: theme pairs become a document_start stylesheet and a storage m
   on.message('chime', { tab: { mutedInfo: { muted: true } } }); // a tab the user muted
   on.message('chime', { tab: { mutedInfo: { muted: false } } });
   await settle();
-  assert.equal(played.length, 1, 'the chime, only on its own message and never for a muted tab');
+  assert.deepEqual(played, [784, 523.25], 'two notes down, only on its own message and never for a muted tab');
   // a private window's run of items is kept in memory, never written to storage
   const before = JSON.stringify(saved);
   on.message({ trail: 'trail:youtube', value: { chain: ['a', 'b'], at: NOON } });
   assert.deepEqual(JSON.parse(JSON.stringify(await on.message({ getTrail: 'trail:youtube' }))), { chain: ['a', 'b'], at: NOON });
   assert.equal(await on.message({ getTrail: 'trail:x' }), null);
   assert.equal(JSON.stringify(saved), before, 'nothing on disk');
-  // the file it plays is in the repo and in the package
-  assert.ok(fs.statSync(path.join(__dirname, '..', played[0])).size > 0, played[0]);
-  assert.ok(packed(played[0]), 'not left out of the package');
   // time on social media: the time between notes from any tabs under 2 s apart, one writer, each day from zero
   const look = (ms) => {
     clock.now += ms;

@@ -102,12 +102,27 @@ browser.runtime.onInstalled.addListener(({ reason }) => reason === 'install' && 
 // there tells whether one is. and its tabs.update has no loadReplace: its schema rejects the property, and with
 // it the whole call (mobile/shared/components/extensions/schemas/tabs.json, 2026-10)
 const android = browser.runtime.getPlatformInfo().then(({ os }) => os === 'android');
-// the 6 am bell from five nights at freddy's, when a content script reports a block appearing. played here, not
-// in the page: a page could learn the moz-extension url, whose id is random per browser and so a tracking handle.
-// extension pages may sound without a click (media.autoplay.allow-extension-background-pages, on by default).
-// a muted tab stays quiet: its mute silences its own media only, never this page, where the bell plays
+// two soft notes down (g5, then c5), made from tones when a content script reports a block appearing: no sound
+// file to ship. played here, not in the page, which has no business knowing a block sounded. extension pages may
+// sound without a click (media.autoplay.allow-extension-background-pages, on by default), an AudioContext too
+// (AutoplayPolicy.cpp IsWindowAllowedToPlayByTraits, 2026-10). a muted tab stays quiet: its mute silences its own
+// media only, never this page. one context for good: firefox caps how many a page may open
+let audio = null;
 async function chime(tab) {
-  if (!tab?.mutedInfo?.muted && !(await android)) new Audio(browser.runtime.getURL('sounds/chime.mp3')).play();
+  if (tab?.mutedInfo?.muted || (await android)) return;
+  audio ??= new AudioContext();
+  for (const [freq, start, length] of [[784, 0, 0.7], [523.25, 0.22, 1]]) {
+    const at = audio.currentTime + start;
+    const tone = audio.createOscillator();
+    const fade = audio.createGain();
+    tone.frequency.value = freq;
+    fade.gain.setValueAtTime(0.0001, at);
+    fade.gain.exponentialRampToValueAtTime(0.15, at + 0.008);
+    fade.gain.exponentialRampToValueAtTime(0.0001, at + length);
+    tone.connect(fade).connect(audio.destination);
+    tone.start(at);
+    tone.stop(at + length);
+  }
 }
 browser.runtime.onMessage.addListener((message, sender) => {
   if (message === 'chime') chime(sender.tab);

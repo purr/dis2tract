@@ -27,7 +27,6 @@ which files stay out of the package is set once, in `webExt.ignoreFiles` in `pac
 | `src/links.js` | clean links: tracking off copied and opened links |
 | `options/` | the settings page |
 | `porn/` | the page porn tabs are sent to, and its two clips |
-| `sounds/` | the chime |
 
 rules are url-based, so a site redesign rarely breaks them; a site that moves a feed to a new url needs a new rule in `src/sites.js`. `DESIGN.md` is the stock apple.com design analysis (from awesome-design-md) the base colors, type and pills come from; where the block screen and settings follow ios instead (sheet shadow, field focus glow, green switches, press scale, radii from 4 to 22 px), `src/overlay.css.js` and `options/options.css` win. `pages/why-the-scroll-wins.html` explains why feeds are hard to put down and what research says helps; open it in any browser.
 
