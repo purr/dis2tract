@@ -26,6 +26,7 @@
   const UNLOCK_MS = UNLOCK.minutes * 60_000;
   const EXTEND_MS = UNLOCK.extendMinutes * 60_000;
   const HOP_MS = 10 * 60_000; // a block on another site this recently means the scroll just moved apps
+  const WATCHED_MS = 2 * 60_000; // a picked video that played this long (or near its end) was watched, not skimmed
 
   let settings = mergeSettings();
   let theme = {}; // css variables from background.js; the registered stylesheet paints them first, these keep an open page current
@@ -52,7 +53,10 @@
   let feedPassed = false; // background.js reported a feed address passed through between two looks
   let traversed = false; // the url change came from back/forward
   let held = false; // the site's autoplay brought this item: no player starts until the next input
-  let userLoops = false; // a player starting over on this url was looped by the user (sites.js)
+  let picked = false; // a long-form video the user picked: no carry, their own loops, a run only when skimmed (sites.js)
+  let watched = 0; // ms the picked video on this url played
+  let longest = 0; // its length in s, the longest of the players that played (0: not known)
+  let lookAt = 0; // the last look, to add the time since
   let wasOpen = false; // the last look let a blocked page through
   let finish = null; // the unlock ran out under a video near its end: { href, until, media: player → last position }
   let graced = null; // the unlock whose video was let end (its start, + once extended): once each, once more after the extra minute
@@ -681,7 +685,15 @@
     tweak();
     // a clip the site starts over by itself plays once: with nobody at the page it stops at its start. only that
     // player: a looping gif on x would otherwise pause the video being watched next to it
-    for (const m of startedOver()) if (settings.stopAutoplay && !userLoops && !touched()) m.pause();
+    for (const m of startedOver()) if (settings.stopAutoplay && !picked && !touched()) m.pause();
+    const now = Date.now();
+    if (picked) {
+      const on = [...document.querySelectorAll('video, audio'), ...playing].filter((m) => !m.paused && !m.ended);
+      // a tick more than a second late is a sleeping machine, not time watched
+      if (on.length) watched += Math.min(now - lookAt, 1000);
+      longest = Math.max(longest, ...on.map((m) => (Number.isFinite(m.duration) ? m.duration : 0)));
+    }
+    lookAt = now;
     const reason = settings.sites[siteId] !== false && blocked();
     if (stopped && (!reason || unlocked())) return reopen();
     const open = Boolean(reason) && (unlocked() || finishing());
@@ -714,6 +726,10 @@
     href = u.href.split('#')[0];
     const before = key;
     key = site.itemKey(u);
+    // the video just left was watched: it played WATCHED_MS, or nearly to its end if shorter. a live stream has no
+    // known end and needs the full time
+    const watchedOne = picked && key !== before && watched >= Math.min(WATCHED_MS, longest * 800 || WATCHED_MS);
+    if (key !== before) [watched, longest] = [0, 0];
     // the site's autoplay: one item after another with nobody at the page (no input lately, not back/forward)
     // starts paused, and stays so until the next input. a playlist keeps its key and plays on; loops: startedOver()
     if (key !== before) held = Boolean(before && key) && settings.stopAutoplay && !traversed && !touched();
@@ -724,21 +740,25 @@
       feedAt = Date.now();
     }
     tweakTries = 0;
+    picked = Boolean(site.picked?.(u));
     // instagram's /reels/ swaps its url to a random /reels/CODE/ a moment after load: that item is still the
-    // feed. back/forward is the user leaving, so an item reached that way is a real page.
-    inFeed = Boolean(feed) || (!traversed && (inFeed || feedPassed) && key !== null && Date.now() - feedAt < 3000);
+    // feed. back/forward is the user leaving, so an item reached that way is a real page. a picked video (a
+    // youtube watch page) is never carried: as the feed it was cut, an hour-long video included, when the unlock ran out
+    inFeed = Boolean(feed) || (!traversed && !picked && (inFeed || feedPassed) && key !== null && Date.now() - feedAt < 3000);
     feedPassed = false;
     traversed = false;
     unlimited = conversation(u) || site.free(u);
-    userLoops = Boolean(site.userLoops?.(u));
-    // back to an earlier item steps out of the chain instead of growing it, so the back button escapes a block
+    // back to an earlier item steps out of the chain instead of growing it, so the back button escapes a block.
+    // a video watched ends the run, as a search or a profile does: long videos one after another are no doomscroll,
+    // skimming one after another (a click through the recommendations every few seconds) is
+    if (!key || watchedOne) chain.length = 0;
     const seen = key ? chain.indexOf(key) : -1;
-    if (!key) chain.length = 0;
-    else if (seen === -1) {
+    if (seen !== -1) chain.length = seen + 1;
+    else if (key) {
       chain.push(key);
       // past the highest possible limit the verdict is the same, and the whole run is written on every url change
       if (chain.length > LIMITS.chainLimit[1] + 1) chain.shift();
-    } else chain.length = seen + 1;
+    }
     scrolled = scrolledOn.get(href) ?? 0;
     if (ready) saveTrail();
     evaluate();

@@ -353,31 +353,62 @@ test('a feed is covered before storage answers and stays covered; search is free
   assert.equal(t.reason(), null);
 });
 
-test('the 5th different video in a row is blocked; the back button steps out', async () => {
+test('the 5th different short in a row is blocked; the back button steps out', async () => {
   const t = boot('https://www.youtube.com/results?search_query=cats');
   await settle();
   for (const v of ['a', 'b', 'c', 'd']) {
-    t.nav(`https://www.youtube.com/watch?v=${v}`);
+    t.nav(`https://www.youtube.com/shorts/${v}`);
     assert.equal(t.reason(), null, v);
   }
-  t.nav('https://www.youtube.com/watch?v=e');
+  t.nav('https://www.youtube.com/shorts/e');
   assert.equal(t.reason(), 'chain');
-  t.nav('https://www.youtube.com/watch?v=d');
+  t.nav('https://www.youtube.com/shorts/d');
   assert.equal(t.reason(), null, 'back to the 4th');
-  t.nav('https://www.youtube.com/watch?v=f');
+  t.nav('https://www.youtube.com/shorts/f');
   assert.equal(t.reason(), 'chain', 'forward to a new one');
   t.nav('https://www.youtube.com/@someone');
-  t.nav('https://www.youtube.com/watch?v=g');
+  t.nav('https://www.youtube.com/shorts/g');
   assert.equal(t.reason(), null, 'a profile resets the chain');
 });
 
-test('a curated playlist is one item, a mix counts per video', async () => {
-  const t = boot('https://www.youtube.com/feed/subscriptions');
+test('youtube videos: skimmed ones count in a row, a watched one ends the run; none is the feed it was opened from', async () => {
+  const results = 'https://www.youtube.com/results?search_query=cats';
+  // a click on a video that plays for ms, then is left paused
+  const watch = async (t, v, ms, duration = 600) => {
+    t.touch();
+    t.nav(`https://www.youtube.com/watch?v=${v}`);
+    const m = t.play({ duration, currentTime: 0 });
+    await t.run(ms);
+    m.pause();
+  };
+  const t = boot(results);
   await settle();
-  for (const v of 'abcdefgh') t.nav(`https://www.youtube.com/watch?v=${v}&list=PLcourse&index=1`);
-  assert.equal(t.reason(), null);
-  for (const v of 'abcde') t.nav(`https://www.youtube.com/watch?v=${v}&list=RDMM`);
-  assert.equal(t.reason(), 'chain');
+  for (const v of 'abcd') await watch(t, v, 20_000);
+  t.touch();
+  t.nav('https://www.youtube.com/watch?v=e');
+  assert.equal(t.reason(), 'chain', 'the 5th video skimmed for 20 s each');
+  const w = boot(results);
+  await settle();
+  for (const v of 'abcdefg') await watch(w, v, 2.5 * MIN);
+  assert.equal(w.reason(), null, 'videos watched one after another never are');
+  const s = boot(results);
+  await settle();
+  for (const v of 'abcdefg') await watch(s, v, 50_000, 60);
+  assert.equal(s.reason(), null, 'a one-minute video played nearly to its end is watched');
+  const mixed = boot(results);
+  await settle();
+  for (const v of 'abcd') mixed.nav(`https://www.youtube.com/shorts/${v}`);
+  mixed.nav('https://www.youtube.com/watch?v=x');
+  assert.equal(mixed.reason(), 'chain', 'a video opened after four shorts is the 5th in a row');
+  const home = boot('https://www.youtube.com/', { unlocks: [{ site: 'youtube', at: NOON }] });
+  await settle();
+  home.clock.now += 400;
+  home.tick();
+  home.nav('https://www.youtube.com/watch?v=long'); // a tap on a video in the unlocked home feed
+  const film = home.play({ duration: 3600, currentTime: 0 });
+  await home.run(4 * MIN);
+  assert.equal(home.reason(), null, 'the unlock ran out; the video it opened plays on');
+  assert.equal(film.paused, false);
 });
 
 test('instagram reels tab stays blocked after it jumps to a reel; a later item is a real page', async () => {
@@ -404,14 +435,14 @@ test('a reload or new tab within a minute keeps the shorts tab blocked and the c
   assert.equal(reloaded.reason(), 'feed', 'a reload is not a way out of the shorts tab');
   const c = boot('https://www.youtube.com/results?search_query=x');
   await settle();
-  for (const v of 'abcde') c.nav(`https://www.youtube.com/watch?v=${v}`);
+  for (const v of 'abcde') c.nav(`https://www.youtube.com/shorts/${v}`);
   assert.equal(c.reason(), 'chain');
-  const again = boot('https://www.youtube.com/watch?v=e', { 'trail:youtube': c.data['trail:youtube'] });
+  const again = boot('https://www.youtube.com/shorts/e', { 'trail:youtube': c.data['trail:youtube'] });
   await settle();
   assert.equal(again.reason(), 'chain', 'a reload is not a fresh chain');
   assert.equal(again.overlay().getAttribute('data-enter'), null, 'a page load, not a block while browsing: no fade');
   assert.equal(again.chimes.length, 0, 'and no bell');
-  const later = boot('https://www.youtube.com/watch?v=e', { 'trail:youtube': { ...c.data['trail:youtube'], at: NOON - 2 * MIN } });
+  const later = boot('https://www.youtube.com/shorts/e', { 'trail:youtube': { ...c.data['trail:youtube'], at: NOON - 2 * MIN } });
   await settle();
   assert.equal(later.reason(), null, 'after a minute the run is over');
 });
@@ -446,11 +477,11 @@ test('a private window stores none of its browsing; its run of items stays in ba
   };
   const t = boot('https://www.youtube.com/results?search_query=x', { recent: [{ site: 'x', at: NOON - MIN }] }, incognito);
   await settle();
-  for (const v of 'abcde') t.nav(`https://www.youtube.com/watch?v=${v}`);
+  for (const v of 'abcde') t.nav(`https://www.youtube.com/shorts/${v}`);
   assert.equal(t.reason(), 'chain');
   assert.equal(t.data['trail:youtube'], undefined, 'no watched ids on disk');
   assert.deepEqual(t.data.recent, [{ site: 'x', at: NOON - MIN }], 'and no visit for the mirror of other windows');
-  const again = boot('https://www.youtube.com/watch?v=e', {}, incognito);
+  const again = boot('https://www.youtube.com/shorts/e', {}, incognito);
   await settle();
   assert.equal(again.reason(), 'chain', 'a reload in the private window is still no way out');
 });

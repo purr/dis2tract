@@ -2,6 +2,10 @@
 
 newest first. each version's section becomes its github release notes.
 
+## 0.8.5
+
+- youtube videos you watch are no longer cut: one that played 2 minutes (or nearly to its end) starts a new count in a row, and one opened from the unlocked home feed plays on when the unlock runs out. clicking through videos every few seconds still stops at the 5th
+
 ## 0.8.4
 
 - a submit button next to never mind in the unlock challenge: the number pad on iphones has no enter key

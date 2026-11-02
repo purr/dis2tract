@@ -32,7 +32,7 @@ every feed can be switched off on its own in settings, for example to allow tikt
 | bluesky | home, custom feeds, explore | search, profiles, posts, notifications, messages |
 | linkedin | home feed, with its for you and network tabs | search, profiles, posts, messages, notifications, jobs |
 
-a youtube playlist counts as one video in a row; a mix counts every video, since it autoplays forever. x's full-screen video viewer on a phone counts every video you swipe to. facebook stories count once per person, like instagram's; group posts opened by their link and youtube clips count too.
+youtube videos (the watch page) count in a row only when skimmed: one that played 2 min, or nearly to its end if it is shorter, starts a new count, like a search does. so long videos, talks and documentaries one after another are fine, and clicking through videos every few seconds stops at the 5th. a video opened from the home feed plays on when the unlock runs out; the scroll limit still applies under it. x's full-screen video viewer on a phone counts every video you swipe to. facebook stories count once per person, like instagram's; group posts opened by their link and youtube shorts and clips count too.
 
 ## no easy way out
 
